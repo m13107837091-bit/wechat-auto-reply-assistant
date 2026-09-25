@@ -1,0 +1,29 @@
+# ===== 环境与密钥（绝不入库）=====
+.env
+.env.*
+!.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# ===== 运行产物 =====
+*.log
+*.db
+*.sqlite3
+session_cache.json
+config.local.*
+
+# ===== 编辑器/系统 =====
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

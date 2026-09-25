@@ -1,0 +1,10 @@
+# 微信接入（Windows PC 微信 UI 自动化）
+# 注意：请确保本机 PC 微信版本与 wxauto 支持版本匹配（见 README）
+wxauto
+
+# 大模型：OpenAI 兼容接口（DeepSeek / OpenAI / Ollama 等）
+openai>=1.30.0
+
+# 配置
+python-dotenv>=1.0.0
+PyYAML>=6.0

@@ -1,0 +1,157 @@
+# 🤖 微信自动回复聊天助手（WeChat Auto-Reply Assistant）
+
+一个跑在 **Windows 版 PC 微信**上的 AI 自动回复助手：监听私聊 / 群聊新消息，调用大模型（DeepSeek / OpenAI / Ollama 等任意 OpenAI 兼容接口）生成回复并自动发送。轻量、可配置、易于二次开发。
+
+> ## ⚠️ 重要免责声明（务必先读）
+>
+> 本项目通过 **UI 自动化**操作个人微信，**并非微信官方授权的接口**，可能违反《微信软件许可及服务协议》，存在**账号被限制或封禁**的风险。请务必：
+>
+> - 使用 **小号 / 测试号**，不要用主力账号；
+> - 遵守内置的**回复限速**，避免群聊刷屏；
+> - 仅用于学习与个人研究，**自行承担一切后果**。
+>
+> 本项目仅供技术学习交流，作者不对任何封号、数据丢失等问题负责。
+
+## ✨ 特性
+
+- 💬 私聊自动回复、群聊**被 @ 自动回复**（可配置）
+- 🧠 任意 OpenAI 兼容大模型：DeepSeek / OpenAI / Ollama / 通义 / Kimi …
+- 🎛 白名单 / 黑名单、关键词触发、回复限速、夜间静默
+- 🧾 按会话的多轮上下文记忆（LRU + TTL）
+- 🛡 大模型异常时兜底话术或静默，主循环不崩
+- 🔐 密钥走 `.env`（不入库），行为策略走 `config.yaml`
+
+## 🧰 工作原理
+
+```
+PC 微信 ──(UI 自动化)──▶ wxauto ──▶ 收到新消息
+                                        │
+                                   过滤策略（Bot）
+                       ┌────────────────┼────────────────┐
+                白名单/黑名单      群聊@/关键词      限速/夜间静默
+                        │
+                   组装上下文（系统提示 + 会话记忆 + 本条消息）
+                        │
+                   大模型（OpenAI 兼容接口）
+                        │
+                   回复文本 ──▶ wxauto ──▶ 发送到微信
+```
+
+## 📚 参考项目
+
+本项目在设计时参考了以下开源项目（按 Star 排序）：
+
+| 项目 | 说明 |
+| --- | --- |
+| [zhayujie/CowAgent](https://github.com/zhayujie/CowAgent)（原 chatgpt-on-wechat） | 多通道·多模型 AI 助手，功能与架构设计的核心参考 |
+| [cluic/wxauto](https://github.com/cluic/wxauto) | 本项目采用的底层微信接入库（Windows PC 微信自动化） |
+| [lich0821/WeChatFerry](https://github.com/lich0821/WeChatFerry) | hook 微信 4.x 的方案（仅参考功能清单，仓库已归档、封号风险高） |
+| [zynsync/Zyn-iLink-ChatBox](https://github.com/zynsync/Zyn-iLink-ChatBox) | 基于官方 iLink 接口的思路参考 |
+
+## 🗂 目录结构
+
+```
+wechat-auto-reply-assistant/
+├── README.md
+├── LICENSE                 # MIT
+├── config.yaml             # 行为策略（白名单/限速/夜间静默等）
+├── .env.example            # 密钥模板（复制为 .env）
+├── requirements.txt
+├── requirements-dev.txt
+├── pytest.ini
+├── src/
+│   ├── main.py             # 入口
+│   ├── config.py           # 加载 .env + config.yaml
+│   ├── wechat_client.py    # wxauto 封装（收/发消息）
+│   ├── llm.py              # OpenAI 兼容大模型客户端
+│   ├── bot.py              # 过滤 + 组装 + 回复逻辑
+│   └── session.py          # 会话记忆
+└── tests/
+    └── test_bot.py         # 核心逻辑单元测试
+```
+
+## 🚀 快速开始
+
+### 前置条件
+
+- Windows 系统，已安装并**登录 PC 微信**
+- Python 3.10+
+- 一个大模型的 API Key（DeepSeek 等），或本机 Ollama
+
+### 1. 安装依赖
+
+```bash
+cd wechat-auto-reply-assistant
+python -m venv .venv
+.venv\Scripts\activate        # Windows PowerShell
+pip install -r requirements.txt
+```
+
+### 2. 配置
+
+```bash
+copy .env.example .env
+# 编辑 .env，填入你的 LLM API Key（以及 base_url / model）
+# 按需编辑 config.yaml（白名单、限速、群聊@、夜间静默等）
+```
+
+`.env` 关键项：
+
+| 变量 | 说明 |
+| --- | --- |
+| `LLM_PROVIDER` | `openai`（任意 OpenAI 兼容接口）或 `ollama`（本地） |
+| `LLM_BASE_URL` | 接口地址，DeepSeek 为 `https://api.deepseek.com` |
+| `LLM_API_KEY` | API Key |
+| `LLM_MODEL` | 模型名，如 `deepseek-chat` |
+
+### 3. 运行
+
+```bash
+python -m src.main
+```
+
+启动后程序会连接 PC 微信并开始监听；给机器人发消息即可测试，`Ctrl+C` 退出。
+
+> ⚠️ 运行期间请**保持 PC 微信窗口可用**（不要最小化到托盘），并确保微信版本与 wxauto 支持版本匹配（见下）。
+
+## 🎛 配置说明（`config.yaml`）
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `reply.whitelist` | `[]` | 只回复这些对象（备注名/群名）；空表示不限制 |
+| `reply.blacklist` | `[]` | 永不回复这些对象 |
+| `reply.keyword_trigger` | `[]` | 仅当消息含这些关键词才回复；空表示全部 |
+| `reply.max_reply_per_minute` | `20` | 每分钟最大回复数（防封号） |
+| `reply.min_interval_seconds` | `1.0` | 两次回复最小间隔（秒） |
+| `reply.night_silence` | 开 | 夜间静默时段（23:30–07:00 内不回复） |
+| `reply.group.only_when_mentioned` | `真` | 群聊仅被 @ 时回复 |
+| `reply.group.self_nickname` | `""` | 你的微信昵称，用于精确判断是否「@ 了我」 |
+| `reply.fallback_reply` | 见配置 | 大模型出错时的兜底回复 |
+| `session.max_turns` | `8` | 每会话保留的上下文轮数 |
+| `session.ttl_seconds` | `3600` | 会话记忆有效期（秒） |
+
+## 🧪 测试
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+## 🔌 关于微信接入（wxauto）
+
+- 本项目基于 [wxauto](https://github.com/cluic/wxauto) 的 UI 自动化能力收发消息。
+- **微信版本敏感**：不同微信版本可能需要不同 wxauto 版本，请以 wxauto 官方说明为准；若报「连接微信失败」，通常是版本不匹配。
+- 仅支持**文本消息**自动回复；图片、语音、文件等消息暂不处理（可自行扩展）。
+
+## 🛠 常见问题
+
+- **连不上微信**：请确认 PC 微信已登录、窗口可用、微信与 wxauto 版本匹配。
+- **只想在某个群生效**：把群名填进 `reply.whitelist`。
+- **不想在晚上打扰**：保持 `night_silence.enabled: true`（默认开启）。
+- **API 报错**：检查 `.env` 的 key / model / base_url 是否正确、是否有额度。
+
+## 📄 License
+
+[MIT](./LICENSE) © wechat-auto-reply-assistant contributors
+
+> 再次提醒：请遵守相关服务的条款与《微信软件许可及服务协议》，谨慎使用，风险自负。

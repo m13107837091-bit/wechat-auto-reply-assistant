@@ -1,0 +1,42 @@
+# ============================================================
+# 微信自动回复助手 - 行为策略配置
+# 密钥（api key 等）请在 .env 里填，本文件只放非敏感的行为配置。
+# ============================================================
+
+llm:
+  provider: openai          # openai | ollama
+  model: deepseek-chat      # 可被 .env 的 LLM_MODEL 覆盖
+  temperature: 0.6
+  max_tokens: 800
+  timeout_seconds: 30
+  system_prompt: "你是一个友好、耐心的微信聊天助手。回复简洁自然、用中文；不知道就直说不知道，不要编造。"
+
+reply:
+  # 只回复这些对象（联系人备注名或群名）；留空 [] 表示不限制
+  whitelist: []
+  # 永不回复这些对象
+  blacklist: []
+  # 仅当消息包含其中任一关键词才回复；留空 [] 表示所有消息都回复
+  keyword_trigger: []
+  # 限速（防打扰 / 降低封号风险）
+  max_reply_per_minute: 20
+  min_interval_seconds: 1.0
+  # 夜间静默时段（在此区间内不自动回复）
+  night_silence:
+    enabled: true
+    start: "23:30"
+    end: "07:00"
+  # 大模型出错时的兜底回复；置空 "" 表示出错时直接不回复
+  fallback_reply: "（自动回复）我现在不方便回复，稍后联系。"
+  # 群聊
+  group:
+    enabled: true
+    only_when_mentioned: true   # 仅当被 @ 时回复，避免群聊刷屏
+    self_nickname: ""           # 你在微信里的昵称，用于精确判断“是否@了我”；留空则退化为“群里有人被@就回复”
+  # 私聊
+  friend:
+    enabled: true
+
+session:
+  max_turns: 8        # 每个会话保留最近 N 轮上下文
+  ttl_seconds: 3600   # 会话 N 秒无交互后清空记忆
