@@ -8,6 +8,7 @@ import time
 from .bot import Bot
 from .config import AppConfig
 from .llm import LLMClient, LLMError
+from .search import build_search
 from .session import SessionStore
 from .wechat_client import WeChatClient, WeChatNotReadyError
 
@@ -25,7 +26,8 @@ def main() -> int:
         return 2
 
     sessions = SessionStore(config.session.max_turns, config.session.ttl_seconds)
-    bot = Bot(config, llm, sessions)
+    search = build_search(config.search)
+    bot = Bot(config, llm, sessions, search)
     wechat = WeChatClient()
 
     try:

@@ -61,6 +61,29 @@ def test_blacklist_chat_and_sender():
     assert bot.reject_reason("某群", "hi", True, sender="小明") == "in_blacklist"
 
 
+def test_match_mode_exact():
+    bot = make_bot(whitelist=["小明"], match_mode="exact")
+    assert bot.reject_reason("小红", "hi", False) == "not_in_whitelist"
+    assert bot.reject_reason("小明", "hi", False) is None
+    # 精确模式下，带后缀的备注名不算命中
+    assert bot.reject_reason("小明（同事）", "hi", False) == "not_in_whitelist"
+
+
+def test_match_mode_contains():
+    bot = make_bot(whitelist=["小明"], match_mode="contains")
+    assert bot.reject_reason("小明（同事）", "hi", False) is None
+    assert bot.reject_reason("小红", "hi", False) == "not_in_whitelist"
+
+
+def test_blacklist_match_mode():
+    bot = make_bot(blacklist=["老板"], match_mode="contains")
+    assert bot.reject_reason("王老板", "hi", False) == "in_blacklist"
+    assert bot.reject_reason("某群", "hi", True, sender="李老板") == "in_blacklist"
+
+    bot2 = make_bot(blacklist=["老板"], match_mode="exact")
+    assert bot2.reject_reason("王老板", "hi", False) is None
+
+
 def test_group_only_when_mentioned():
     bot = make_bot(group_only_when_mentioned=True)
     assert bot.reject_reason("某群", "hi", True) == "not_mentioned"

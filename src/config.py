@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# 默认联网搜索触发关键词（命中即认为该问题可能需要实时信息）
+DEFAULT_SEARCH_KEYWORDS: tuple[str, ...] = (
+    "天气", "气温", "下雨", "下雪", "台风", "地震", "新闻", "头条", "热搜",
+    "实时", "最新", "股价", "股票", "行情", "汇率", "油价", "金价", "比分", "排名",
+)
+
 
 @dataclass
 class LLMConfig:
@@ -29,6 +35,7 @@ class ReplyConfig:
     whitelist: list[str] = field(default_factory=list)
     blacklist: list[str] = field(default_factory=list)
     keyword_trigger: list[str] = field(default_factory=list)
+    match_mode: str = "exact"  # exact（精确）| contains（包含）
     max_reply_per_minute: int = 20
     min_interval_seconds: float = 1.0
     night_silence_enabled: bool = True
@@ -48,10 +55,30 @@ class SessionConfig:
 
 
 @dataclass
+class PersonaConfig:
+    name: str = "小助手"
+    style: str = "自然活泼"
+    emoji: bool = True
+    length: str = "auto"  # auto | short | detailed
+
+
+@dataclass
+class SearchConfig:
+    enabled: bool = True
+    provider: str = "tavily"
+    api_key: str = ""
+    top_k: int = 4
+    timeout_seconds: float = 10.0
+    keywords: list[str] = field(default_factory=lambda: list(DEFAULT_SEARCH_KEYWORDS))
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     reply: ReplyConfig = field(default_factory=ReplyConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    persona: PersonaConfig = field(default_factory=PersonaConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "AppConfig":
@@ -77,6 +104,7 @@ class AppConfig:
         cfg.reply.whitelist = _as_str_list(reply_raw.get("whitelist"))
         cfg.reply.blacklist = _as_str_list(reply_raw.get("blacklist"))
         cfg.reply.keyword_trigger = _as_str_list(reply_raw.get("keyword_trigger"))
+        cfg.reply.match_mode = str(reply_raw.get("match_mode", cfg.reply.match_mode))
         cfg.reply.max_reply_per_minute = int(reply_raw.get("max_reply_per_minute", cfg.reply.max_reply_per_minute))
         cfg.reply.min_interval_seconds = float(reply_raw.get("min_interval_seconds", cfg.reply.min_interval_seconds))
         night = reply_raw.get("night_silence") or {}
@@ -95,6 +123,21 @@ class AppConfig:
         cfg.session.max_turns = int(session_raw.get("max_turns", cfg.session.max_turns))
         cfg.session.ttl_seconds = int(session_raw.get("ttl_seconds", cfg.session.ttl_seconds))
 
+        persona_raw = raw.get("persona") or {}
+        cfg.persona.name = str(persona_raw.get("name", cfg.persona.name))
+        cfg.persona.style = str(persona_raw.get("style", cfg.persona.style))
+        cfg.persona.emoji = bool(persona_raw.get("emoji", cfg.persona.emoji))
+        cfg.persona.length = str(persona_raw.get("length", cfg.persona.length))
+
+        search_raw = raw.get("search") or {}
+        cfg.search.enabled = bool(search_raw.get("enabled", cfg.search.enabled))
+        cfg.search.provider = str(search_raw.get("provider", cfg.search.provider))
+        cfg.search.api_key = str(os.getenv("SEARCH_API_KEY") or "")
+        cfg.search.top_k = int(search_raw.get("top_k", cfg.search.top_k))
+        cfg.search.timeout_seconds = float(search_raw.get("timeout_seconds", cfg.search.timeout_seconds))
+        keywords = _as_str_list(search_raw.get("keywords"))
+        cfg.search.keywords = keywords if keywords else list(DEFAULT_SEARCH_KEYWORDS)
+
         cfg.validate()
         return cfg
 
@@ -103,8 +146,16 @@ class AppConfig:
             raise ValueError("config: reply.max_reply_per_minute 不能为负")
         if self.reply.min_interval_seconds < 0:
             raise ValueError("config: reply.min_interval_seconds 不能为负")
+        if self.reply.match_mode not in ("exact", "contains"):
+            raise ValueError("config: reply.match_mode 只能是 exact / contains")
         if self.session.max_turns < 1:
             raise ValueError("config: session.max_turns 至少为 1")
+        _parse_hhmm(self.reply.night_silence_start)
+        _parse_hhmm(self.reply.night_silence_end)
+        if self.search.top_k < 0:
+            raise ValueError("config: search.top_k 不能为负")
+        if self.persona.length not in ("auto", "short", "detailed"):
+            raise ValueError("config: persona.length 只能是 auto / short / detailed")
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -114,3 +165,14 @@ def _as_str_list(value: Any) -> list[str]:
         return [str(x).strip() for x in value if str(x).strip()]
     s = str(value).strip()
     return [s] if s else []
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    """解析并校验 HH:MM 时间，非法则抛 ValueError。"""
+    parts = [p.strip() for p in str(value).split(":")]
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        raise ValueError(f"config: 时间格式应为 HH:MM，当前为 {value!r}")
+    h, m = int(parts[0]), int(parts[1])
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError(f"config: 时间超出范围，当前为 {value!r}")
+    return h, m

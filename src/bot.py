@@ -7,6 +7,8 @@ from typing import Sequence
 
 from .config import AppConfig
 from .llm import LLMClient, LLMError
+from .prompt import build_system_prompt
+from .search import SearchProvider, should_search
 from .session import SessionStore
 
 
@@ -36,10 +38,17 @@ class RateLimiter:
 class Bot:
     """把“该不该回 / 回什么”的决策与 LLM、会话、限速串起来。"""
 
-    def __init__(self, config: AppConfig, llm: LLMClient, sessions: SessionStore) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        llm: LLMClient,
+        sessions: SessionStore,
+        search: SearchProvider | None = None,
+    ) -> None:
         self.config = config
         self.llm = llm
         self.sessions = sessions
+        self.search = search
         self.limiter = RateLimiter(config.reply.max_reply_per_minute, config.reply.min_interval_seconds)
 
     # ---------- 纯决策逻辑（可单测） ----------
@@ -71,6 +80,12 @@ class Bot:
             return self_nickname in [str(a) for a in at_list]
         return True  # 未配置昵称时退化为“群里有人被 @”
 
+    def _in_list(self, name: str, patterns: Sequence[str]) -> bool:
+        """按 match_mode 判断名称是否命中名单（精确或包含）。"""
+        if self.config.reply.match_mode == "contains":
+            return any(p in name for p in patterns)
+        return name in patterns
+
     def reject_reason(
         self,
         chat: str,
@@ -93,9 +108,9 @@ class Bot:
             if not cfg.friend_enabled:
                 return "friend_disabled"
 
-        if cfg.whitelist and chat not in cfg.whitelist:
+        if cfg.whitelist and not self._in_list(chat, cfg.whitelist):
             return "not_in_whitelist"
-        if cfg.blacklist and (chat in cfg.blacklist or (sender and sender in cfg.blacklist)):
+        if cfg.blacklist and (self._in_list(chat, cfg.blacklist) or (sender and self._in_list(sender, cfg.blacklist))):
             return "in_blacklist"
 
         if is_group and cfg.group_only_when_mentioned and not self._is_mentioned(at_list, cfg.group_self_nickname):
@@ -122,6 +137,21 @@ class Bot:
             return f"{sender} 说：{content}"
         return content
 
+    def _search_context(self, content: str) -> str:
+        """按需检索实时信息；返回参考文本或空串（不检索/失败/无结果）。"""
+        if self.search is None or not self.config.search.enabled:
+            return ""
+        if not should_search(content, self.config.search.keywords):
+            return ""
+        try:
+            results = self.search.search(content, self.config.search.top_k)
+        except Exception:  # noqa: BLE001 - 搜索失败不影响主回复
+            return ""
+        if not results:
+            return ""
+        refs = "\n".join(f"- {r.title}：{r.snippet}" for r in results)
+        return f"[以下是与问题相关的实时搜索结果，回答时请参考、不要编造]：\n{refs}"
+
     def on_message(
         self,
         chat: str,
@@ -136,10 +166,13 @@ class Bot:
 
         key = self._session_key(chat, is_group)
         user_text = self._user_text(content, is_group, sender)
+        search_context = self._search_context(content)
+        prompt_user = user_text + ("\n\n" + search_context if search_context else "")
+
         messages = [
-            {"role": "system", "content": self.config.llm.system_prompt},
+            {"role": "system", "content": build_system_prompt(self.config)},
             *self.sessions.get(key),
-            {"role": "user", "content": user_text},
+            {"role": "user", "content": prompt_user},
         ]
 
         try:

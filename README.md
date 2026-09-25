@@ -17,6 +17,7 @@
 - 💬 私聊自动回复、群聊**被 @ 自动回复**（可配置）
 - 🧠 任意 OpenAI 兼容大模型：DeepSeek / OpenAI / Ollama / 通义 / Kimi …
 - 🎛 白名单 / 黑名单、关键词触发、回复限速、夜间静默
+- 🎭 可配置人设 / 说话风格 + 按需联网搜索（天气 / 新闻等实时问题有据可答，可选）
 - 🧾 按会话的多轮上下文记忆（LRU + TTL）
 - 🛡 大模型异常时兜底话术或静默，主循环不崩
 - 🔐 密钥走 `.env`（不入库），行为策略走 `config.yaml`
@@ -103,6 +104,8 @@ copy .env.example .env
 | `LLM_BASE_URL` | 接口地址，DeepSeek 为 `https://api.deepseek.com` |
 | `LLM_API_KEY` | API Key |
 | `LLM_MODEL` | 模型名，如 `deepseek-chat` |
+| `SEARCH_PROVIDER` | 联网搜索后端，目前支持 `tavily`（可选，留空则关闭搜索） |
+| `SEARCH_API_KEY` | Tavily 的 API Key（`https://tavily.com` 有免费额度） |
 
 ### 3. 运行
 
@@ -120,15 +123,24 @@ python -m src.main
 | --- | --- | --- |
 | `reply.whitelist` | `[]` | 只回复这些对象（备注名/群名）；空表示不限制 |
 | `reply.blacklist` | `[]` | 永不回复这些对象 |
+| `reply.match_mode` | `exact` | 名单匹配方式：`exact`（精确全名）/ `contains`（包含即可命中） |
 | `reply.keyword_trigger` | `[]` | 仅当消息含这些关键词才回复；空表示全部 |
 | `reply.max_reply_per_minute` | `20` | 每分钟最大回复数（防封号） |
 | `reply.min_interval_seconds` | `1.0` | 两次回复最小间隔（秒） |
 | `reply.night_silence` | 开 | 夜间静默时段（23:30–07:00 内不回复） |
+| `reply.group.enabled` | `false` | 是否回复群聊（默认关：**只回私聊**；需要回群再改 `true`） |
 | `reply.group.only_when_mentioned` | `真` | 群聊仅被 @ 时回复 |
 | `reply.group.self_nickname` | `""` | 你的微信昵称，用于精确判断是否「@ 了我」 |
+| `reply.friend.enabled` | `true` | 是否回复私聊 |
 | `reply.fallback_reply` | 见配置 | 大模型出错时的兜底回复 |
 | `session.max_turns` | `8` | 每会话保留的上下文轮数 |
 | `session.ttl_seconds` | `3600` | 会话记忆有效期（秒） |
+| `persona.name` | `小助手` | 机器人自称 |
+| `persona.style` | `自然活泼` | 说话风格（简洁 / 活泼 / 正式 / 幽默 …） |
+| `persona.emoji` | `true` | 是否适度使用 emoji |
+| `persona.length` | `auto` | 回复长度：`auto` / `short` / `detailed` |
+| `search.enabled` | `true` | 是否启用按需联网搜索（仍需 `.env` 配 key） |
+| `search.keywords` | 见配置 | 命中这些关键词才触发搜索（保持「适当」、不每条都搜） |
 
 ## 🧪 测试
 
@@ -142,11 +154,13 @@ pytest
 - 本项目基于 [wxauto](https://github.com/cluic/wxauto) 的 UI 自动化能力收发消息。
 - **微信版本敏感**：不同微信版本可能需要不同 wxauto 版本，请以 wxauto 官方说明为准；若报「连接微信失败」，通常是版本不匹配。
 - 仅支持**文本消息**自动回复；图片、语音、文件等消息暂不处理（可自行扩展）。
+- 机器人发的消息、系统提示、时间戳、撤回等会被自动忽略，避免「自己回自己」造成死循环。
 
 ## 🛠 常见问题
 
 - **连不上微信**：请确认 PC 微信已登录、窗口可用、微信与 wxauto 版本匹配。
-- **只想在某个群生效**：把群名填进 `reply.whitelist`。
+- **只想在某个群生效**：先把 `reply.group.enabled` 改为 `true`，再把群名填进 `reply.whitelist`。
+- **只想回复/不回复某几个人**：填 `reply.whitelist` / `reply.blacklist`，备注名带后缀时把 `reply.match_mode` 改为 `contains`。
 - **不想在晚上打扰**：保持 `night_silence.enabled: true`（默认开启）。
 - **API 报错**：检查 `.env` 的 key / model / base_url 是否正确、是否有额度。
 

@@ -9,6 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
+# 不参与自动回复的消息类型（自己发的、系统消息、时间戳、撤回、媒体等），避免自回死循环
+IGNORED_TYPES = frozenset(
+    {"self", "sys", "time", "recall", "note", "voice", "pic", "image", "video", "file", "share", "sticker"}
+)
+
 
 class WeChatNotReadyError(RuntimeError):
     """PC 微信未登录 / 未运行 / 未装 wxauto / 微信版本不匹配。"""
@@ -79,13 +84,17 @@ class WeChatClient:
             for chat, msgs in raw.items():
                 if isinstance(msgs, (list, tuple)):
                     for msg in msgs:
-                        out.append(self._to_incoming(str(chat), msg))
+                        incoming = self._to_incoming(str(chat), msg)
+                        if incoming is not None:
+                            out.append(incoming)
         return out
 
     @staticmethod
-    def _to_incoming(chat: str, msg: Any) -> IncomingMessage:
+    def _to_incoming(chat: str, msg: Any) -> IncomingMessage | None:
         content = str(getattr(msg, "content", "") or "")
-        mtype = str(getattr(msg, "type", "") or "")
+        mtype = str(getattr(msg, "type", "") or "").lower()
+        if mtype in IGNORED_TYPES:
+            return None
         is_group = mtype == "group"
         sender = str(getattr(msg, "sender", "") or "")
         at_list = getattr(msg, "at_list", None) or []
