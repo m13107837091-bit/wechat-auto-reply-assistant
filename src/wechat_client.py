@@ -11,6 +11,7 @@ wechatauto-replica（``import wechatauto``）是专为微信 4.x 设计的接入
 """
 from __future__ import annotations
 
+import os
 import queue
 import time
 from dataclasses import dataclass, field
@@ -61,6 +62,24 @@ class WeChatClient:
                 ) from exc
         return self._wx
 
+    @staticmethod
+    def _clear_watermark(wx: Any) -> None:
+        """删除监听器的「水位」文件，让每次启动都从当前最新消息开始。
+
+        wechatauto 的监听器会把已处理到哪条消息（sort_seq 水位）落盘复用，
+        于是上次退出后、本次启动前对方发来的旧消息，会被当成「新消息」重放，
+        造成「一启动、对方明明没发消息，机器人却自动回一条」的现象。启动前删掉
+        该文件（``workdir/listener_watermark.json``），注册监听时水位即回落到
+        「最新一条」，历史消息一律不回放。删不掉（路径异常/无权限）就静默忽略，
+        不影响启动。
+        """
+        try:
+            wf = os.path.join(wx._db.workdir, "listener_watermark.json")
+            if os.path.exists(wf):
+                os.remove(wf)
+        except Exception:  # noqa: BLE001 - 删除失败不阻断启动
+            pass
+
     def prepare(self) -> None:
         """校验微信可连接，并开启全局监听。"""
         self._get_wx()
@@ -79,6 +98,9 @@ class WeChatClient:
             WxParam.LISTEN_INTERVAL = 0.5
         except Exception:  # noqa: BLE001 - 版本差异时回退默认值，不影响启动
             pass
+
+        # 关键：先清水位再挂监听，否则会把退出期间的旧消息当成新消息回放。
+        self._clear_watermark(wx)
 
         def _on_message(msg: Any, chat: Any) -> None:
             incoming = self._to_incoming(chat, msg)

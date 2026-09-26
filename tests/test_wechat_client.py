@@ -100,6 +100,31 @@ def test_group_kept_when_include_group_true():
     assert c._accept(IncomingMessage(content="hi", chat="某群", is_group=True)) is True
 
 
+def test_clear_watermark_removes_file(tmp_path):
+    wf = tmp_path / "listener_watermark.json"
+    wf.write_text("{}", encoding="utf-8")
+
+    class _Wx:
+        _db = SimpleNamespace(workdir=str(tmp_path))
+
+    WeChatClient._clear_watermark(_Wx)
+    assert not wf.exists()
+
+
+def test_clear_watermark_nonexistent_file_ok(tmp_path):
+    class _Wx:
+        _db = SimpleNamespace(workdir=str(tmp_path))
+
+    WeChatClient._clear_watermark(_Wx)  # 文件本就不存在，静默通过
+
+
+def test_clear_watermark_tolerates_missing_db():
+    class _Wx:
+        _db = None
+
+    WeChatClient._clear_watermark(_Wx)  # 属性缺失/None 时不抛异常即可
+
+
 def test_constants():
     assert "self" in SKIPPED_ATTRS
     assert "system" in SKIPPED_ATTRS
