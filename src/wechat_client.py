@@ -14,7 +14,7 @@ from __future__ import annotations
 import queue
 import time
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Sequence, TypeGuard
 
 # 不参与自动回复的消息属性：自己发的、系统提示（在接收侧过滤，杜绝“自己回自己”的死循环）。
 SKIPPED_ATTRS = frozenset({"self", "system"})
@@ -39,10 +39,11 @@ class IncomingMessage:
 class WeChatClient:
     """极薄 wechatauto 封装：准备、拉新消息、发消息。"""
 
-    def __init__(self) -> None:
+    def __init__(self, include_group: bool = True) -> None:
         self._wx: Any = None
         self._queue: "queue.Queue[IncomingMessage]" = queue.Queue()
         self._listening = False
+        self._include_group = include_group  # 是否读取群聊消息；由 main 按 reply.group.enabled 决定
 
     def _get_wx(self) -> Any:
         if self._wx is None:
@@ -81,11 +82,11 @@ class WeChatClient:
 
         def _on_message(msg: Any, chat: Any) -> None:
             incoming = self._to_incoming(chat, msg)
-            if incoming is not None:
+            if self._accept(incoming):
                 self._queue.put(incoming)
 
         try:
-            wx.AddListenAll(_on_message, discover=True)
+            wx.AddListenAll(_on_message, discover=False)
             wx.StartListening()
         except Exception:  # noqa: BLE001 - 监听失败不阻断启动
             return
@@ -135,6 +136,19 @@ class WeChatClient:
             at_list=list(at_list),
             received_at=time.time(),
         )
+
+    def _accept(self, incoming: IncomingMessage | None) -> TypeGuard[IncomingMessage]:
+        """决定一条消息是否进入主循环。
+
+        群聊默认丢弃（除非开了 ``include_group``），因为机器人默认只回私聊；
+        把群消息挡在读侧，就不会在主循环里刷出「读取群聊→无需回复」的无用日志，
+        也避免海量群消息挤占队列、拖慢真正需要回的好友消息。
+        """
+        if incoming is None:
+            return False
+        if not self._include_group and incoming.is_group:
+            return False
+        return True
 
     def send(self, chat: str, text: str, at: str | None = None) -> None:
         wx = self._get_wx()

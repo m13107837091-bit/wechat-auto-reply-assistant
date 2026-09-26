@@ -65,7 +65,7 @@ def main() -> int:
     sessions = SessionStore(config.session.max_turns, config.session.ttl_seconds)
     search = build_search(config.search)
     bot = Bot(config, llm, sessions, search)
-    wechat = WeChatClient()
+    wechat = WeChatClient(include_group=config.reply.group_enabled)
 
     try:
         log.info("正在连接 PC 微信……")

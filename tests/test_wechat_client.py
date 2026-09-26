@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.wechat_client import REPLYABLE_TYPES, SKIPPED_ATTRS, WeChatClient
+from src.wechat_client import REPLYABLE_TYPES, SKIPPED_ATTRS, IncomingMessage, WeChatClient
 
 
 def _msg(**kwargs) -> SimpleNamespace:
@@ -86,6 +86,18 @@ def test_nickname_falls_back_to_username():
     m = WeChatClient._to_incoming(chat, _msg(content="hi", type="text", attr="friend"))
     assert m is not None
     assert m.chat == "wxid_abc"
+
+
+def test_group_filtered_when_include_group_false():
+    c = WeChatClient(include_group=False)
+    assert c._accept(IncomingMessage(content="hi", chat="某群", is_group=True)) is False
+    assert c._accept(IncomingMessage(content="hi", chat="小明", is_group=False)) is True
+    assert c._accept(None) is False
+
+
+def test_group_kept_when_include_group_true():
+    c = WeChatClient(include_group=True)
+    assert c._accept(IncomingMessage(content="hi", chat="某群", is_group=True)) is True
 
 
 def test_constants():
