@@ -125,6 +125,31 @@ def test_clear_watermark_tolerates_missing_db():
     WeChatClient._clear_watermark(_Wx)  # 属性缺失/None 时不抛异常即可
 
 
+def test_prune_group_sessions_removes_chatrooms():
+    listener = SimpleNamespace(_callbacks={
+        "wxid_a": [object()],
+        "123@chatroom": [object()],
+        "wxid_b": [object()],
+    })
+    wx = SimpleNamespace(_listener=listener)
+    WeChatClient(include_group=False)._prune_group_sessions(wx)
+    assert "wxid_a" in listener._callbacks
+    assert "wxid_b" in listener._callbacks
+    assert "123@chatroom" not in listener._callbacks
+
+
+def test_prune_group_sessions_skipped_when_include_group():
+    listener = SimpleNamespace(_callbacks={"123@chatroom": [object()]})
+    wx = SimpleNamespace(_listener=listener)
+    WeChatClient(include_group=True)._prune_group_sessions(wx)
+    assert "123@chatroom" in listener._callbacks
+
+
+def test_prune_group_sessions_tolerates_no_listener():
+    wx = SimpleNamespace(_listener=None)
+    WeChatClient(include_group=False)._prune_group_sessions(wx)  # 不抛异常即可
+
+
 def test_constants():
     assert "self" in SKIPPED_ATTRS
     assert "system" in SKIPPED_ATTRS

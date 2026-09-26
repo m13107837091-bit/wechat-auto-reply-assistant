@@ -11,11 +11,14 @@ wechatauto-replica（``import wechatauto``）是专为微信 4.x 设计的接入
 """
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import time
 from dataclasses import dataclass, field
 from typing import Any, Sequence, TypeGuard
+
+log = logging.getLogger(__name__)
 
 # 不参与自动回复的消息属性：自己发的、系统提示（在接收侧过滤，杜绝“自己回自己”的死循环）。
 SKIPPED_ATTRS = frozenset({"self", "system"})
@@ -80,6 +83,34 @@ class WeChatClient:
         except Exception:  # noqa: BLE001 - 删除失败不阻断启动
             pass
 
+    def _prune_group_sessions(self, wx: Any) -> None:
+        """把群聊会话从监听器的回调表里摘掉，减轻每轮轮询的负担。
+
+        wechatauto 的全局监听会把**所有**会话（好友 + 群 + 文件传输助手…）
+        都注册进 ``DBListener._callbacks``，轮询线程每轮会逐个会话查一次新消息
+        （打开 SQLCipher 连接 → 查询 → 关闭）。好友 + 群加在一起会话越多、
+        每轮越久，新消息被拾取就越慢——这正是「排队等待小、但消息出现慢」的
+        来源。机器人默认不回群，把群会话（username 以 ``@chatroom`` 结尾）
+        从回调表摘掉，可显著缩短每轮轮询耗时，让好友消息更快被读到。
+        ``discover=False`` 时这些会话不会被自动加回来。
+        """
+        if self._include_group:
+            return
+        listener = getattr(wx, "_listener", None)
+        callbacks = getattr(listener, "_callbacks", None)
+        if not isinstance(callbacks, dict):
+            return
+        removed = 0
+        for user in list(callbacks.keys()):
+            if user.endswith("@chatroom"):
+                callbacks.pop(user, None)
+                removed += 1
+        if removed:
+            log.info(
+                "[读取] 已摘除 %d 个群聊会话的监听（只轮询好友），剩余 %d 个会话",
+                removed, len(callbacks),
+            )
+
     def prepare(self) -> None:
         """校验微信可连接，并开启全局监听。"""
         self._get_wx()
@@ -109,6 +140,7 @@ class WeChatClient:
 
         try:
             wx.AddListenAll(_on_message, discover=False)
+            self._prune_group_sessions(wx)
             wx.StartListening()
         except Exception:  # noqa: BLE001 - 监听失败不阻断启动
             return
