@@ -1,7 +1,7 @@
-"""对 main 的会话级消息合并做单元测试（不依赖真实微信）。"""
+"""对会话级消息合并（_coalesce，现已迁至 controller）做单元测试（不依赖真实微信）。"""
 from __future__ import annotations
 
-from src.main import _coalesce
+from src.controller import _coalesce
 from src.wechat_client import IncomingMessage
 
 

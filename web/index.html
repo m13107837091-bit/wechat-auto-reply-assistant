@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>微信自动回复 · 控制面板</title>
+<style>
+  :root {
+    --bg: #101418;
+    --card: #1a2128;
+    --line: #2a333d;
+    --text: #e7ecf1;
+    --muted: #8a98a6;
+    --accent: #3aa675;
+    --accent-ink: #07240f;
+    --danger: #d5645f;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 620px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+
+  /* 状态区 */
+  .status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 0 3px rgba(58,166,117,.18); }
+  .dot.off { background: var(--danger); }
+  .err {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(213,100,95,.1);
+    border: 1px solid rgba(213,100,95,.35);
+    border-radius: 8px;
+    color: #e8a7a3;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .hidden { display: none; }
+
+  button {
+    font: inherit;
+    border: 0;
+    cursor: pointer;
+    border-radius: 9px;
+    padding: 10px 18px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary { background: #33404c; color: var(--text); }
+  button.danger { background: var(--danger); color: #fff; }
+
+  /* 表单 */
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  label:first-child { margin-top: 0; }
+  input[type="text"], textarea, select {
+    width: 100%;
+    font: inherit;
+    font-size: 15px;
+    color: var(--text);
+    background: #10161b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .checkbox-row label { margin: 0; font-size: 15px; color: var(--text); }
+
+  .actions { display: flex; gap: 10px; margin-top: 18px; }
+  .actions button { flex: 1; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: #22322b; color: #b7e6c9; border: 1px solid var(--accent);
+    padding: 10px 18px; border-radius: 10px; font-size: 14px;
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .toast.err { background: #3a2321; color: #e8a7a3; border-color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>微信自动回复</h1>
+  <p class="sub">控制面板 · 改人设立即生效，无需重启</p>
+
+  <div class="card">
+    <div class="status-row">
+      <div class="status">
+        <span class="dot" id="dot"></span>
+        <span id="statusText">加载中…</span>
+      </div>
+      <button id="toggleBtn" onclick="toggle()">…</button>
+    </div>
+    <div class="err hidden" id="err"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px;margin:0 0 4px">智能体人设</h2>
+    <label for="name">名字</label>
+    <input type="text" id="name" placeholder="例如：小助手">
+
+    <label for="style">说话风格</label>
+    <input type="text" id="style" placeholder="例如：自然活泼、幽默、稳重…">
+
+    <label for="length">回复长短</label>
+    <select id="length">
+      <option value="auto">自动</option>
+      <option value="short">简短</option>
+      <option value="detailed">详细</option>
+    </select>
+
+    <div class="checkbox-row" style="margin-top:14px">
+      <input type="checkbox" id="emoji">
+      <label for="emoji">使用 emoji 表情</label>
+    </div>
+
+    <label for="systemPrompt">自我介绍（系统提示词）</label>
+    <textarea id="systemPrompt" placeholder="告诉它：我是谁、要扮演什么角色、怎么回…"></textarea>
+
+    <div class="actions">
+      <button onclick="savePersona()">保存人设</button>
+      <button class="secondary" onclick="refresh()">重新加载</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let status = { running: false, persona: {} };
+
+function showToast(msg, isErr) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  setTimeout(() => t.className = 'toast', 2200);
+}
+
+async function api(path, opts) {
+  const resp = await fetch(path, opts);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || ('请求失败 ' + resp.status));
+  return data;
+}
+
+function render() {
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('statusText');
+  const btn = document.getElementById('toggleBtn');
+  const err = document.getElementById('err');
+
+  dot.className = 'dot ' + (status.running ? 'on' : 'off');
+  txt.textContent = status.running ? '运行中 · 自动回复已开启' : '已暂停 · 不再自动回复';
+  btn.textContent = status.running ? '暂停回复' : '开始回复';
+  btn.className = status.running ? 'danger' : '';
+
+  if (status.last_error) {
+    err.textContent = '⚠ ' + status.last_error;
+    err.classList.remove('hidden');
+  } else {
+    err.classList.add('hidden');
+  }
+
+  const p = status.persona || {};
+  document.getElementById('name').value = p.name || '';
+  document.getElementById('style').value = p.style || '';
+  document.getElementById('length').value = p.length || 'auto';
+  document.getElementById('emoji').checked = !!p.emoji;
+  document.getElementById('systemPrompt').value = p.system_prompt || '';
+}
+
+async function refresh(silent) {
+  try {
+    status = await api('/api/status');
+    render();
+  } catch (e) {
+    if (!silent) showToast(e.message, true);
+  }
+}
+
+async function toggle() {
+  const btn = document.getElementById('toggleBtn');
+  btn.disabled = true;
+  try {
+    const data = status.running
+      ? await api('/api/stop', { method: 'POST' })
+      : await api('/api/start', { method: 'POST' });
+    status = data;
+    render();
+    showToast(status.running ? '已开始自动回复' : '已暂停自动回复');
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function savePersona() {
+  try {
+    const body = {
+      name: document.getElementById('name').value,
+      style: document.getElementById('style').value,
+      length: document.getElementById('length').value,
+      emoji: document.getElementById('emoji').checked,
+      system_prompt: document.getElementById('systemPrompt').value,
+    };
+    const data = await api('/api/persona', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    status.persona = data.persona;
+    render();
+    showToast('人设已保存，下一句回复即生效');
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+refresh();
+setInterval(() => refresh(true), 5000);
+</script>
+</body>
+</html>

@@ -156,3 +156,14 @@ def test_constants():
     assert "text" in REPLYABLE_TYPES
     assert "quote" in REPLYABLE_TYPES
     assert "image" not in REPLYABLE_TYPES
+
+
+def test_discard_pending_clears_queue():
+    c = WeChatClient(include_group=False)
+    c._queue.put(IncomingMessage(content="旧消息", chat="小明", is_group=False))
+    c.discard_pending()
+    assert c._queue.empty()
+
+
+def test_discard_pending_empty_queue_ok():
+    WeChatClient().discard_pending()  # 空队列直接清，不抛异常

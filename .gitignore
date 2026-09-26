@@ -21,6 +21,7 @@ build/
 *.sqlite3
 session_cache.json
 config.local.*
+persona.json
 
 # ===== 编辑器/系统 =====
 .idea/

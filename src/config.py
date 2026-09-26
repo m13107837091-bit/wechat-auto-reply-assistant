@@ -1,6 +1,7 @@
 """配置加载：.env（密钥）+ config.yaml（行为策略）。"""
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,8 @@ import yaml
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 控制面板里可编辑的人设会持久化到该文件，加载时叠加覆盖 config.yaml 的默认值。
+PERSONA_FILE = PROJECT_ROOT / "persona.json"
 
 # 默认联网搜索触发关键词（命中即认为该问题可能需要实时信息）
 DEFAULT_SEARCH_KEYWORDS: tuple[str, ...] = (
@@ -81,7 +84,7 @@ class AppConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
 
     @classmethod
-    def load(cls, config_path: str | Path | None = None) -> "AppConfig":
+    def load(cls, config_path: str | Path | None = None, persona_path: str | Path | None = None) -> "AppConfig":
         load_dotenv(PROJECT_ROOT / ".env")
         path = Path(config_path) if config_path else (PROJECT_ROOT / "config.yaml")
         raw: dict[str, Any] = {}
@@ -139,6 +142,7 @@ class AppConfig:
         cfg.search.keywords = keywords if keywords else list(DEFAULT_SEARCH_KEYWORDS)
 
         cfg.validate()
+        _apply_persona_overrides(cfg, persona_path)
         return cfg
 
     def validate(self) -> None:
@@ -176,3 +180,38 @@ def _parse_hhmm(value: str) -> tuple[int, int]:
     if not (0 <= h <= 23 and 0 <= m <= 59):
         raise ValueError(f"config: 时间超出范围，当前为 {value!r}")
     return h, m
+
+
+def _load_persona_overrides(path: str | Path | None = None) -> dict[str, Any]:
+    """读取 persona.json 的人设覆盖；文件缺失 / 损坏时返回空 dict。"""
+    p = Path(path) if path else PERSONA_FILE
+    try:
+        raw: Any = json.loads(p.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_persona(overrides: dict[str, Any], path: str | Path | None = None) -> None:
+    """把人设覆盖持久化到 persona.json，与 load 时的叠加语义保持一致。"""
+    p = Path(path) if path else PERSONA_FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _apply_persona_overrides(cfg: AppConfig, path: str | Path | None) -> None:
+    """把 persona.json 的字段叠加到 config；缺字段则保留 config.yaml 的默认值。"""
+    ov = _load_persona_overrides(path)
+    if not ov:
+        return
+    pc = cfg.persona
+    if "name" in ov:
+        pc.name = str(ov["name"])
+    if "style" in ov:
+        pc.style = str(ov["style"])
+    if "emoji" in ov:
+        pc.emoji = bool(ov["emoji"])
+    if "length" in ov:
+        pc.length = str(ov["length"])
+    if "system_prompt" in ov:
+        cfg.llm.system_prompt = str(ov["system_prompt"])

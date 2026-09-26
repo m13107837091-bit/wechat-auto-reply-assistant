@@ -158,6 +158,18 @@ class WeChatClient:
                 break
         return out
 
+    def discard_pending(self) -> None:
+        """清空已监听但尚未处理的消息队列。
+
+        暂停自动回复期间，监听线程仍会把新消息送入队列；恢复时若不清掉，
+        会把暂停期间积压的旧消息一批回完。这里直接清空，恢复后只回新的。
+        """
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+
     @staticmethod
     def _to_incoming(chat: Any, msg: Any) -> IncomingMessage | None:
         """把 wechatauto 的一条消息映射为 IncomingMessage；不可回复时返回 None。
