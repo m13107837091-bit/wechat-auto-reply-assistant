@@ -1,7 +1,8 @@
-# 微信接入（Windows PC 微信 UI 自动化）
-# wxauto 已不在 PyPI 上，这里直接指定 GitHub 源安装；
-# 注意：cluic/wxauto 对应微信 3.9.x，请确保本机 PC 微信版本匹配（见 README）
-wxauto @ git+https://github.com/cluic/wxauto.git
+# 微信接入（Windows PC 微信 4.x）
+# 旧版 wxauto 仅支持微信 3.9.x（且已不在 PyPI 上）；微信 4.x 移除 UIA 树导致其失效。
+# 改用 wechatauto-replica（import wechatauto）：SQLCipher 解密本地消息库读取 + UIA/坐标-OCR 发送，
+# 支持微信 4.1.12+（作者实测 4.1.15.13）。项目地址见 README。
+wechatauto-replica>=1.2.4
 
 # 大模型：OpenAI 兼容接口（DeepSeek / OpenAI / Ollama 等）
 openai>=1.30.0

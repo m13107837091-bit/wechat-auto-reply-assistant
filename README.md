@@ -25,7 +25,7 @@
 ## 🧰 工作原理
 
 ```
-PC 微信 ──(UI 自动化)──▶ wxauto ──▶ 收到新消息
+PC 微信 ──(本地库解密 + UIA 发送)──▶ wechatauto ──▶ 收到新消息
                                         │
                                    过滤策略（Bot）
                        ┌────────────────┼────────────────┐
@@ -35,7 +35,7 @@ PC 微信 ──(UI 自动化)──▶ wxauto ──▶ 收到新消息
                         │
                    大模型（OpenAI 兼容接口）
                         │
-                   回复文本 ──▶ wxauto ──▶ 发送到微信
+                   回复文本 ──▶ wechatauto ──▶ 发送到微信
 ```
 
 ## 📚 参考项目
@@ -45,7 +45,8 @@ PC 微信 ──(UI 自动化)──▶ wxauto ──▶ 收到新消息
 | 项目 | 说明 |
 | --- | --- |
 | [zhayujie/CowAgent](https://github.com/zhayujie/CowAgent)（原 chatgpt-on-wechat） | 多通道·多模型 AI 助手，功能与架构设计的核心参考 |
-| [cluic/wxauto](https://github.com/cluic/wxauto) | 本项目采用的底层微信接入库（Windows PC 微信自动化） |
+| [fanyuantaier/wechatauto-replica](https://github.com/fanyuantaier/wechatauto-replica) | 本项目采用的底层微信接入库（微信 4.x：消息库解密读取 + UIA/坐标-OCR 发送） |
+| [cluic/wxauto](https://github.com/cluic/wxauto) | 旧版接入库，仅支持微信 3.9.x（本项目已弃用） |
 | [lich0821/WeChatFerry](https://github.com/lich0821/WeChatFerry) | hook 微信 4.x 的方案（仅参考功能清单，仓库已归档、封号风险高） |
 | [zynsync/Zyn-iLink-ChatBox](https://github.com/zynsync/Zyn-iLink-ChatBox) | 基于官方 iLink 接口的思路参考 |
 
@@ -63,7 +64,7 @@ wechat-auto-reply-assistant/
 ├── src/
 │   ├── main.py             # 入口
 │   ├── config.py           # 加载 .env + config.yaml
-│   ├── wechat_client.py    # wxauto 封装（收/发消息）
+│   ├── wechat_client.py    # wechatauto 封装（收/发消息）
 │   ├── llm.py              # OpenAI 兼容大模型客户端
 │   ├── bot.py              # 过滤 + 组装 + 回复逻辑
 │   └── session.py          # 会话记忆
@@ -117,7 +118,7 @@ python -m src.main
 
 启动后程序会连接 PC 微信并开始监听；给机器人发消息即可测试，`Ctrl+C` 退出。
 
-> ⚠️ 运行期间请**保持 PC 微信窗口可用**（不要最小化到托盘），并确保微信版本与 wxauto 支持版本匹配（见下）。
+> ⚠️ 运行期间请**保持 PC 微信窗口可用**（不要最小化到托盘、不要锁屏），并确保微信版本与 wechatauto-replica 支持版本匹配（见下）。
 
 ## 🎛 配置说明（`config.yaml`）
 
@@ -151,16 +152,20 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-## 🔌 关于微信接入（wxauto）
+## 🔌 关于微信接入（wechatauto-replica）
 
-- 本项目基于 [wxauto](https://github.com/cluic/wxauto) 的 UI 自动化能力收发消息。**wxauto 已不在 PyPI 上**，`requirements.txt` 已改为从 GitHub 直接安装（`git+https://github.com/cluic/wxauto.git`），对应微信 **3.9.x**。
-- **微信版本敏感**：不同微信版本可能需要不同 wxauto 版本，请以 wxauto 官方说明为准；若报「连接微信失败」，通常是版本不匹配（本项目默认对应微信 3.9.x）。
+- 本项目基于 [wechatauto-replica](https://github.com/fanyuantaier/wechatauto-replica)（`import wechatauto`，PyPI 包名 `wechatauto-replica`）收发消息，对应微信 **4.1.12+**（作者实测 4.1.15.13）。
+  - **读消息**：解密本地消息库（SQLCipher），无需依赖旧的 UIA 控件树，因此支持微信 4.x。
+  - **发消息**：UIA + 坐标/OCR 混合发送，运行时请**保持微信窗口可见、不要锁屏**。
+- **为什么弃用 wxauto**：旧版 [cluic/wxauto](https://github.com/cluic/wxauto) 依赖微信 3.9.x 的 UIA 控件树，微信 4.x 移除了该树导致「连接失败」；wxauto 也已不在 PyPI 上。
+- **微信版本敏感**：若报「连接 PC 微信失败」，请确认微信已登录、窗口可用，且版本在 4.1.12 以上；升级微信后需重新运行（密钥缓存会因版本变化失效，程序会自动重新提取）。
 - 仅支持**文本消息**自动回复；图片、语音、文件等消息暂不处理（可自行扩展）。
-- 机器人发的消息、系统提示、时间戳、撤回等会被自动忽略，避免「自己回自己」造成死循环。
+- 机器人自己发的消息、系统提示会被自动忽略，避免「自己回自己」造成死循环。
+- 已知限制：当前版本未从消息里解析「@ 提及」信息，因此 `group.only_when_mentioned` 对 4.x 后端不可靠；默认 `group.enabled: false`，如需回群请留意。
 
 ## 🛠 常见问题
 
-- **连不上微信**：请确认 PC 微信已登录、窗口可用、微信与 wxauto 版本匹配。
+- **连不上微信**：请确认 PC 微信已登录、窗口可用、微信版本为 4.1.12+（与 wechatauto-replica 匹配）。
 - **只想在某个群生效**：先把 `reply.group.enabled` 改为 `true`，再把群名填进 `reply.whitelist`。
 - **只想回复/不回复某几个人**：填 `reply.whitelist` / `reply.blacklist`，备注名带后缀时把 `reply.match_mode` 改为 `contains`。
 - **不想在晚上打扰**：保持 `night_silence.enabled: true`（默认开启）。
