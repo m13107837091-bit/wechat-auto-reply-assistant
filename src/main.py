@@ -66,7 +66,7 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - 主循环保持存活
             log.exception("处理消息时出错: %s", exc)
             time.sleep(1)
-        time.sleep(0.5)
+        time.sleep(0.2)
 
 
 if __name__ == "__main__":

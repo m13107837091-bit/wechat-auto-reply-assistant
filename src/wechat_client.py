@@ -68,6 +68,15 @@ class WeChatClient:
             return
         wx = self._wx
 
+        # 监听轮询间隔默认 1s；拉低到 0.5s，让新消息更快被拾取、回复更及时。
+        # 需在 AddListenAll 内部创建 db.Listener 之前设置才生效。
+        try:
+            from wechatauto.param import WxParam
+
+            WxParam.LISTEN_INTERVAL = 0.5
+        except Exception:  # noqa: BLE001 - 版本差异时回退默认值，不影响启动
+            pass
+
         def _on_message(msg: Any, chat: Any) -> None:
             incoming = self._to_incoming(chat, msg)
             if incoming is not None:
