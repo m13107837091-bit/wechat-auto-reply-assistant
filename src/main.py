@@ -21,10 +21,35 @@ from src.config import AppConfig
 from src.llm import LLMClient, LLMError
 from src.search import build_search
 from src.session import SessionStore
-from src.wechat_client import WeChatClient, WeChatNotReadyError
+from src.wechat_client import IncomingMessage, WeChatClient, WeChatNotReadyError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("wechat-bot")
+
+
+def _coalesce(messages: list[IncomingMessage]) -> list[IncomingMessage]:
+    """同一会话在本次轮询里积压的多条消息合并为一条。
+
+    对方连发多条时，逐条回复会串行跑多次 LLM + 多次发送，后面的消息要排很久；
+    合并成一条一口气回，只回一次、也更及时。内容用换行拼接保留原意。
+    """
+    index: dict[tuple[str, bool], int] = {}
+    out: list[IncomingMessage] = []
+    for m in messages:
+        key = (m.chat, m.is_group)
+        if key in index:
+            prev = out[index[key]]
+            out[index[key]] = IncomingMessage(
+                content=f"{prev.content}\n{m.content}".strip(),
+                chat=m.chat,
+                is_group=m.is_group,
+                sender=m.sender or prev.sender,
+                at_list=m.at_list or prev.at_list,
+            )
+        else:
+            index[key] = len(out)
+            out.append(m)
+    return out
 
 
 def main() -> int:
@@ -52,7 +77,7 @@ def main() -> int:
 
     while True:
         try:
-            for msg in wechat.get_new_messages():
+            for msg in _coalesce(wechat.get_new_messages()):
                 reply = bot.on_message(msg.chat, msg.content, msg.is_group, msg.sender, msg.at_list)
                 if reply:
                     wechat.send(msg.chat, reply)
