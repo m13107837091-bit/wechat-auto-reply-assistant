@@ -113,6 +113,8 @@ copy .env.example .env
 python -m src.main
 ```
 
+也可以直接在 **PyCharm 里右键运行 `src/main.py`**（已支持脚本方式启动，无需额外配置）。
+
 启动后程序会连接 PC 微信并开始监听；给机器人发消息即可测试，`Ctrl+C` 退出。
 
 > ⚠️ 运行期间请**保持 PC 微信窗口可用**（不要最小化到托盘），并确保微信版本与 wxauto 支持版本匹配（见下）。
@@ -151,8 +153,8 @@ pytest
 
 ## 🔌 关于微信接入（wxauto）
 
-- 本项目基于 [wxauto](https://github.com/cluic/wxauto) 的 UI 自动化能力收发消息。
-- **微信版本敏感**：不同微信版本可能需要不同 wxauto 版本，请以 wxauto 官方说明为准；若报「连接微信失败」，通常是版本不匹配。
+- 本项目基于 [wxauto](https://github.com/cluic/wxauto) 的 UI 自动化能力收发消息。**wxauto 已不在 PyPI 上**，`requirements.txt` 已改为从 GitHub 直接安装（`git+https://github.com/cluic/wxauto.git`），对应微信 **3.9.x**。
+- **微信版本敏感**：不同微信版本可能需要不同 wxauto 版本，请以 wxauto 官方说明为准；若报「连接微信失败」，通常是版本不匹配（本项目默认对应微信 3.9.x）。
 - 仅支持**文本消息**自动回复；图片、语音、文件等消息暂不处理（可自行扩展）。
 - 机器人发的消息、系统提示、时间戳、撤回等会被自动忽略，避免「自己回自己」造成死循环。
 

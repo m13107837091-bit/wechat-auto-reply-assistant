@@ -1,16 +1,27 @@
-"""程序入口：加载配置 → 连接微信 → 监听消息 → 自动回复。"""
+"""程序入口：加载配置 → 连接微信 → 监听消息 → 自动回复。
+
+支持两种启动方式：`python -m src.main`，或直接在 PyCharm 里右键运行本文件（脚本方式）。
+"""
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 
-from .bot import Bot
-from .config import AppConfig
-from .llm import LLMClient, LLMError
-from .search import build_search
-from .session import SessionStore
-from .wechat_client import WeChatClient, WeChatNotReadyError
+# 脚本方式直接运行（python src/main.py）时，把项目根目录加入 sys.path，
+# 这样才能 `import src.*`，同时让 src 内部模块的相对导入正常生效。
+if __package__ in (None, ""):
+    _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+
+from src.bot import Bot
+from src.config import AppConfig
+from src.llm import LLMClient, LLMError
+from src.search import build_search
+from src.session import SessionStore
+from src.wechat_client import WeChatClient, WeChatNotReadyError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("wechat-bot")
