@@ -45,6 +45,7 @@ def _coalesce(messages: list[IncomingMessage]) -> list[IncomingMessage]:
                 is_group=m.is_group,
                 sender=m.sender or prev.sender,
                 at_list=m.at_list or prev.at_list,
+                received_at=prev.received_at,
             )
         else:
             index[key] = len(out)
@@ -78,10 +79,28 @@ def main() -> int:
     while True:
         try:
             for msg in _coalesce(wechat.get_new_messages()):
+                # 读取阶段：消息从「监听线程入队」到「主循环取到」的等待时长。
+                # received_at 是监听线程入队时打的时间戳，值越大说明越积压、读取越慢。
+                if msg.received_at:
+                    log.info("[读取] %s 的新消息，排队等待 %.2fs", msg.chat, time.time() - msg.received_at)
+                else:
+                    log.info("[读取] %s 的新消息", msg.chat)
+
+                gen_start = time.time()
+                log.info("[生成] 正在给 %s 生成回复中……", msg.chat)
                 reply = bot.on_message(msg.chat, msg.content, msg.is_group, msg.sender, msg.at_list)
+                gen_cost = time.time() - gen_start
+
                 if reply:
+                    send_start = time.time()
                     wechat.send(msg.chat, reply)
-                    log.info("回复 %s: %s", msg.chat, reply[:40])
+                    send_cost = time.time() - send_start
+                    log.info(
+                        "[发送] %s：生成 %.2fs / 发送 %.2fs | %s",
+                        msg.chat, gen_cost, send_cost, reply[:40],
+                    )
+                else:
+                    log.info("[生成] %s 无需回复（耗时 %.2fs）", msg.chat, gen_cost)
         except WeChatNotReadyError as exc:
             log.error("%s；5 秒后重试……", exc)
             time.sleep(5)

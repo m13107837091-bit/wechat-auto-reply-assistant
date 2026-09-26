@@ -12,6 +12,7 @@ wechatauto-replica（``import wechatauto``）是专为微信 4.x 设计的接入
 from __future__ import annotations
 
 import queue
+import time
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -32,6 +33,7 @@ class IncomingMessage:
     is_group: bool
     sender: str = ""
     at_list: Sequence[str] = field(default_factory=list)
+    received_at: float = 0.0  # 监听线程入队时刻，用于观测「消息到达 → 被处理」的读取延迟
 
 
 class WeChatClient:
@@ -131,6 +133,7 @@ class WeChatClient:
             is_group=is_group,
             sender=sender,
             at_list=list(at_list),
+            received_at=time.time(),
         )
 
     def send(self, chat: str, text: str, at: str | None = None) -> None:
