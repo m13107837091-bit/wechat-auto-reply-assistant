@@ -45,3 +45,16 @@ class LLMClient:
                 if attempt < max_retries:
                     time.sleep(min(2 ** attempt, 8))
         raise LLMError(f"LLM 调用失败（已重试）: {last}")
+
+    def test(self) -> str:
+        """连通性自检：发一个 1 token 的极小请求；成功返回空串，失败返回错误文案。"""
+        try:
+            self._client.chat.completions.create(
+                model=self.config.model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                temperature=0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return str(exc)
+        return ""

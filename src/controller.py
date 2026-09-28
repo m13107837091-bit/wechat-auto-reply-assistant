@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .bot import Bot
-from .config import AppConfig, save_persona
+from .config import AppConfig, LLMConfig, mask_api_key, save_llm_settings, save_persona
 from .llm import LLMClient, LLMError
 from .search import build_search
 from .session import SessionStore
@@ -61,12 +61,14 @@ class BotController:
         bot: Bot | None = None,
         wechat: WeChatClient | None = None,
         persona_path: str | Path | None = None,
+        settings_path: str | Path | None = None,
     ) -> None:
         self.config = config or AppConfig.load()
         self._llm = llm
         self._bot = bot
         self._wechat = wechat
         self._persona_path = Path(persona_path) if persona_path else None
+        self._settings_path = Path(settings_path) if settings_path else None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -175,6 +177,7 @@ class BotController:
             "running": self._running,
             "last_error": self.last_error,
             "persona": self.get_persona(),
+            "llm": self.get_llm_settings(),
         }
 
     def get_persona(self) -> dict[str, Any]:
@@ -206,3 +209,62 @@ class BotController:
         snapshot = self.get_persona()
         save_persona(snapshot, self._persona_path)
         return snapshot
+
+    def get_llm_settings(self) -> dict[str, Any]:
+        """面板需要的 LLM 连接状态（key 只回脱敏值，绝不回全文）。"""
+        llm = self.config.llm
+        return {
+            "provider": llm.provider,
+            "base_url": llm.base_url,
+            "model": llm.model,
+            "api_key_masked": mask_api_key(llm.api_key),
+            "has_api_key": bool(llm.api_key),
+        }
+
+    def update_llm(self, overrides: dict[str, Any]) -> dict[str, Any]:
+        """改 LLM 连接设置（api_key/base_url/model）：先验证、再持久化并热切换。
+
+        用新配置构造一次 LLMClient 以验证完整性（openai 兼容需要 base_url + api_key），
+        验证通过才写回 config 与 settings.local.json，并把已构建的客户端/机器人切到新实例，
+        下一句回复即生效；验证失败则不动任何状态。
+        """
+        llm = self.config.llm
+        candidate = LLMConfig(
+            provider=str(overrides.get("provider", llm.provider)).strip() or "openai",
+            base_url=str(overrides.get("base_url", llm.base_url)).strip(),
+            model=str(overrides.get("model", llm.model)).strip(),
+            api_key=str(overrides.get("api_key", llm.api_key)).strip(),
+            temperature=llm.temperature,
+            max_tokens=llm.max_tokens,
+            timeout_seconds=llm.timeout_seconds,
+            system_prompt=llm.system_prompt,
+        )
+        try:
+            new_llm = LLMClient(candidate)
+        except LLMError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        llm.provider = candidate.provider
+        llm.base_url = candidate.base_url
+        llm.model = candidate.model
+        llm.api_key = candidate.api_key
+        save_llm_settings(
+            {"provider": llm.provider, "base_url": llm.base_url,
+             "model": llm.model, "api_key": llm.api_key},
+            self._settings_path,
+        )
+
+        self._llm = new_llm
+        if self._bot is not None:
+            self._bot.llm = new_llm
+        return {"ok": True, "llm": self.get_llm_settings()}
+
+    def test_llm(self) -> dict[str, Any]:
+        """发一个极小的真实请求验证当前 key/地址是否可用。"""
+        if self._llm is None:
+            try:
+                self._llm = LLMClient(self.config.llm)
+            except LLMError as exc:
+                return {"ok": False, "error": str(exc)}
+        err = self._llm.test()
+        return {"ok": not err, "error": err}

@@ -75,6 +75,12 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, code=400)
                 return
             self._send_json({"ok": True, "persona": updated})
+        elif path == "/api/llm":
+            result = controller.update_llm(self._read_body())
+            self._send_json(result, code=200 if result.get("ok") else 400)
+        elif path == "/api/llm/test":
+            result = controller.test_llm()
+            self._send_json(result, code=200 if result.get("ok") else 400)
         else:
             self._send_json({"error": "not found"}, code=404)
 

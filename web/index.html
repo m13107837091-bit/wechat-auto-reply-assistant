@@ -119,6 +119,28 @@
   </div>
 
   <div class="card">
+    <h2 style="font-size:16px;margin:0 0 4px">DeepSeek API 设置</h2>
+    <p style="color:var(--muted);font-size:12px;margin:0 0 8px">填你自己的 API Key，只存本机（不上传）。保存后下一句回复立即生效。</p>
+
+    <label for="apiKey">API Key</label>
+    <div style="display:flex;gap:8px">
+      <input type="password" id="apiKey" placeholder="sk-…" autocomplete="off" style="flex:1">
+      <button type="button" class="secondary" id="toggleKeyBtn" onclick="toggleKey()" style="flex:none">显示</button>
+    </div>
+
+    <label for="baseUrl">接口地址 base_url</label>
+    <input type="text" id="baseUrl" placeholder="https://api.deepseek.com">
+
+    <label for="model">模型</label>
+    <input type="text" id="model" placeholder="deepseek-chat">
+
+    <div class="actions">
+      <button onclick="saveLlm()">保存并生效</button>
+      <button class="secondary" onclick="testLlm()">测试连接</button>
+    </div>
+  </div>
+
+  <div class="card">
     <h2 style="font-size:16px;margin:0 0 4px">智能体人设</h2>
     <label for="name">名字</label>
     <input type="text" id="name" placeholder="例如：小助手">
@@ -152,6 +174,7 @@
 
 <script>
 let status = { running: false, persona: {} };
+let llm = { has_api_key: false, api_key_masked: "", base_url: "", model: "" };
 
 function showToast(msg, isErr) {
   const t = document.getElementById('toast');
@@ -196,7 +219,9 @@ function render() {
 async function refresh(silent) {
   try {
     status = await api('/api/status');
+    llm = status.llm || {};
     render();
+    renderLlm();
   } catch (e) {
     if (!silent) showToast(e.message, true);
   }
@@ -239,6 +264,57 @@ async function savePersona() {
   } catch (e) {
     showToast(e.message, true);
   }
+}
+
+function renderLlm() {
+  const keyInput = document.getElementById('apiKey');
+  keyInput.placeholder = llm.has_api_key
+    ? ('已保存：' + llm.api_key_masked + '（留空则不变）')
+    : 'sk-…（首次使用请填写）';
+  document.getElementById('baseUrl').value = llm.base_url || 'https://api.deepseek.com';
+  document.getElementById('model').value = llm.model || 'deepseek-chat';
+}
+
+async function saveLlm() {
+  const body = {};
+  const key = document.getElementById('apiKey').value.trim();
+  const url = document.getElementById('baseUrl').value.trim();
+  const model = document.getElementById('model').value.trim();
+  if (key) body.api_key = key;
+  if (url) body.base_url = url;
+  if (model) body.model = model;
+  if (!Object.keys(body).length) { showToast('没有要保存的内容', true); return; }
+  try {
+    const data = await api('/api/llm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    llm = data.llm;
+    document.getElementById('apiKey').value = '';
+    renderLlm();
+    showToast('API 设置已保存，下一句回复即生效');
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+async function testLlm() {
+  showToast('测试中…');
+  try {
+    const data = await api('/api/llm/test', { method: 'POST' });
+    showToast(data.ok ? '连接成功，key 有效' : ('连接失败：' + data.error), !data.ok);
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+function toggleKey() {
+  const inp = document.getElementById('apiKey');
+  const btn = document.getElementById('toggleKeyBtn');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? '隐藏' : '显示';
 }
 
 refresh();

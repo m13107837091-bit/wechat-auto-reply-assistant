@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # 控制面板里可编辑的人设会持久化到该文件，加载时叠加覆盖 config.yaml 的默认值。
 PERSONA_FILE = PROJECT_ROOT / "persona.json"
+# 面板里填写的 LLM 连接设置（含 API Key）持久化到该文件，优先级高于 .env / config.yaml。
+# 已在 .gitignore 忽略 —— key 绝不入库。
+LLM_SETTINGS_FILE = PROJECT_ROOT / "settings.local.json"
 
 # 默认联网搜索触发关键词（命中即认为该问题可能需要实时信息）
 DEFAULT_SEARCH_KEYWORDS: tuple[str, ...] = (
@@ -84,7 +87,12 @@ class AppConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
 
     @classmethod
-    def load(cls, config_path: str | Path | None = None, persona_path: str | Path | None = None) -> "AppConfig":
+    def load(
+        cls,
+        config_path: str | Path | None = None,
+        persona_path: str | Path | None = None,
+        settings_path: str | Path | None = None,
+    ) -> "AppConfig":
         load_dotenv(PROJECT_ROOT / ".env")
         path = Path(config_path) if config_path else (PROJECT_ROOT / "config.yaml")
         raw: dict[str, Any] = {}
@@ -143,6 +151,7 @@ class AppConfig:
 
         cfg.validate()
         _apply_persona_overrides(cfg, persona_path)
+        _apply_llm_settings_overrides(cfg, settings_path)
         return cfg
 
     def validate(self) -> None:
@@ -215,3 +224,46 @@ def _apply_persona_overrides(cfg: AppConfig, path: str | Path | None) -> None:
         pc.length = str(ov["length"])
     if "system_prompt" in ov:
         cfg.llm.system_prompt = str(ov["system_prompt"])
+
+
+def mask_api_key(key: str) -> str:
+    """把密钥脱敏成可展示的形式（前 4 后 4，中间用 …）。"""
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "•" * len(key)
+    return f"{key[:4]}…{key[-4:]}"
+
+
+def _load_llm_settings(path: str | Path | None = None) -> dict[str, Any]:
+    """读取 settings.local.json 里的 LLM 连接设置；缺失/损坏时返回空 dict。"""
+    p = Path(path) if path else LLM_SETTINGS_FILE
+    try:
+        raw: Any = json.loads(p.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_llm_settings(overrides: dict[str, Any], path: str | Path | None = None) -> None:
+    """把 LLM 连接设置持久化到 settings.local.json。"""
+    p = Path(path) if path else LLM_SETTINGS_FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _apply_llm_settings_overrides(cfg: AppConfig, path: str | Path | None) -> None:
+    """把 settings.local.json 里用户填的 LLM 设置叠加到 config，优先级最高。"""
+    ov = _load_llm_settings(path)
+    if not ov:
+        return
+    llm = cfg.llm
+    if "provider" in ov and str(ov["provider"]).strip():
+        llm.provider = str(ov["provider"]).strip()
+    if "base_url" in ov and str(ov["base_url"]).strip():
+        llm.base_url = str(ov["base_url"]).strip()
+    if "model" in ov and str(ov["model"]).strip():
+        llm.model = str(ov["model"]).strip()
+    # api_key 允许覆盖为空串（即清空 key）
+    if "api_key" in ov:
+        llm.api_key = str(ov["api_key"]).strip()

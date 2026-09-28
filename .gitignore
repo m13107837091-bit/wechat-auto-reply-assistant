@@ -22,9 +22,19 @@ build/
 session_cache.json
 config.local.*
 persona.json
+settings.local.json
+
+# ===== wechatauto 运行时产物（微信本地数据库/解密密钥/OCR 临时文件，绝不入库）=====
+wechatauto_db/
+wechatauto_ocr_tmp.png
 
 # ===== 编辑器/系统 =====
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ===== Tauri 桌面壳构建产物（desktop/ 内另有嵌套 .gitignore，这里兜底）=====
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
