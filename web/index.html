@@ -54,7 +54,9 @@
     white-space: pre-wrap;
     word-break: break-all;
   }
-  .hidden { display: none; }
+  /* 工具类必须能压过组件类：.modal 在下面也定义了 display，
+     同权重时后者会赢，导致 class="modal hidden" 藏不住。用 !important 兜住。 */
+  .hidden { display: none !important; }
 
   button {
     font: inherit;
