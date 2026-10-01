@@ -187,9 +187,17 @@
   <div class="modal-box">
     <h2 style="font-size:16px;margin:0 0 6px">需要访问令牌</h2>
     <p style="color:var(--muted);font-size:12px;margin:0 0 12px">这是远程访问，请填写你在电脑上设置的 UI_TOKEN。</p>
-    <input type="password" id="tokenInput" placeholder="访问令牌" autocomplete="off">
+    <input type="password" id="tokenInput" placeholder="访问令牌" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false"
+           onkeydown="if(event.key==='Enter')saveToken()">
+    <p id="tokenError" class="hidden" style="color:#e5484d;font-size:12px;margin:8px 0 0">
+      令牌不正确，请检查后重新输入（注意别多打/漏掉字符）。
+    </p>
     <div class="actions">
       <button onclick="saveToken()">确定</button>
+      <button onclick="dismissToken()" style="background:transparent;color:var(--muted);border:1px solid var(--line)">
+        先不填
+      </button>
     </div>
   </div>
 </div>
@@ -207,17 +215,29 @@ function showToast(msg, isErr) {
 
 // ---- 访问令牌（远程访问时后端要求；本机不设 UI_TOKEN 则完全不涉及）----
 const TOKEN_KEY = 'ui_token';
-function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+
+// 手机浏览器可能禁用本地存储（无痕模式、Safari「阻止所有 Cookie」等），
+// 直接访问 localStorage 会抛异常，进而把整个保存流程打断、窗口卡住。
+// 这里统一包一层：能用就用，不能用就退回内存（本次会话内仍然有效）。
+let memToken = '';
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || memToken; }
+  catch (e) { return memToken; }
+}
+function setToken(value) {
+  memToken = value;
+  try { localStorage.setItem(TOKEN_KEY, value); } catch (e) { /* 存不了就只用内存 */ }
+}
 
 function bootstrapToken() {
   const t = new URLSearchParams(location.search).get('token');
   if (t) {
-    localStorage.setItem(TOKEN_KEY, t.trim());
+    setToken(t.trim());
     history.replaceState(null, '', location.pathname);  // 不把令牌留在地址栏/历史
   }
 }
 
-function showTokenPrompt() {
+function showTokenPrompt(wrong) {
   const modal = document.getElementById('tokenModal');
   if (modal.classList.contains('hidden')) {
     modal.classList.remove('hidden');
@@ -225,13 +245,27 @@ function showTokenPrompt() {
     input.value = getToken();
     input.focus();
   }
+  // 弹框已开着时也要有反馈：令牌填错就把红字提示亮出来，别让框僵在那儿。
+  document.getElementById('tokenError').classList.toggle('hidden', !wrong);
 }
 
 function saveToken() {
-  localStorage.setItem(TOKEN_KEY, document.getElementById('tokenInput').value.trim());
+  const value = document.getElementById('tokenInput').value.trim();
+  // 先关窗、再存令牌：无论存储是否可用，都不会把用户卡在弹框里。
+  document.getElementById('tokenError').classList.add('hidden');
   document.getElementById('tokenModal').classList.add('hidden');
+  autoRefresh = true;
+  setToken(value);
   refresh();
 }
+
+function dismissToken() {
+  // 用户选择「先不填」：关掉弹框并暂停自动轮询，免得它每 5 秒又跳出来。
+  document.getElementById('tokenModal').classList.add('hidden');
+  autoRefresh = false;
+}
+
+let autoRefresh = true;
 
 async function api(path, opts) {
   opts = opts || {};
@@ -241,10 +275,13 @@ async function api(path, opts) {
   const resp = await fetch(path, Object.assign({}, opts, { headers: headers }));
   const data = await resp.json().catch(() => ({}));
   if (resp.status === 401) {
-    showTokenPrompt();
+    // 本机已存过令牌却仍被拒 = 令牌填错了；从没填过 = 首次提示输入。
+    showTokenPrompt(!!getToken());
     throw new Error(data.error || '需要访问令牌');
   }
   if (!resp.ok) throw new Error(data.error || ('请求失败 ' + resp.status));
+  // 任何一次请求成功，都说明令牌没问题：顺手把弹框关掉，确保不会卡住界面。
+  document.getElementById('tokenModal').classList.add('hidden');
   return data;
 }
 
@@ -379,7 +416,7 @@ bootstrapToken();
 refresh();
 setInterval(() => {
   // 令牌弹层开着时不要后台轮询（避免反复 401）
-  if (document.getElementById('tokenModal').classList.contains('hidden')) refresh(true);
+  if (autoRefresh && document.getElementById('tokenModal').classList.contains('hidden')) refresh(true);
 }, 5000);
 </script>
 </body>

@@ -43,6 +43,8 @@ class ControlHandler(BaseHTTPRequestHandler):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        # 状态数据实时性优先，禁止浏览器/中间层缓存（否则手机可能拿到过期的 401/状态）。
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -135,6 +137,10 @@ class ControlHandler(BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        # 页面必须每次取最新的：手机浏览器对无缓存头的 HTML 会长期缓存，
+        # 一旦缓存到旧版本（例如加令牌逻辑之前的那份），改令牌/点按钮都会「没反应」。
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
