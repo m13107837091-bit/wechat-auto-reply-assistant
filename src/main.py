@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+import time
 
 # 脚本方式直接运行（python src/main.py）时，把项目根目录加入 sys.path，
 # 这样才能 `import src.*`，同时让 src 内部模块的相对导入正常生效。
@@ -38,10 +40,9 @@ def main() -> int:
         log.error("UI_PORT 必须是数字，当前值为 %r", os.getenv("UI_PORT"))
         return 2
 
-    # 自动开始自动回复（维持「一运行就回消息」的旧行为）；失败不退出，面板照常显示错误。
-    if not controller.start():
-        log.error("%s", controller.last_error)
-
+    # 先把面板绑起来（毫秒级），再后台连微信。
+    # 连接微信要整库解密、可能几十秒，若放在这里同步做，端口在这期间根本没监听，
+    # 桌面壳/手机就只能对着白屏干等。倒过来后界面秒开，状态显示「连接中…」。
     try:
         server = run_server(controller, host, port)
     except OSError as exc:
@@ -50,6 +51,18 @@ def main() -> int:
         return 1
 
     log.info("控制面板：http://%s:%d  （Ctrl+C 退出）", host, port)
+
+    # 自动开始自动回复（维持「一运行就回消息」的旧行为）；失败不退出，
+    # last_error 会经 /api/status 显示在面板上，而不是只打在控制台里。
+    def _boot() -> None:
+        started = time.perf_counter()
+        ok = controller.start()
+        if ok:
+            log.info("启动完成，耗时 %.1fs。", time.perf_counter() - started)
+        else:
+            log.error("%s", controller.last_error)
+
+    threading.Thread(target=_boot, name="bot-startup", daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

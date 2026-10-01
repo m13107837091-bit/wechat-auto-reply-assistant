@@ -112,9 +112,21 @@ class WeChatClient:
             )
 
     def prepare(self) -> None:
-        """校验微信可连接，并开启全局监听。"""
+        """校验微信可连接，并开启全局监听。
+
+        耗时主要来自 wechatauto 的整库解密：微信运行时会不停 checkpoint 改写主库，
+        解密缓存（.stamp）随之失效，每次启动都得重新解密数百 MB 并跑完整性校验。
+        这里把两段分别计时打日志，便于判断慢在哪。
+        """
+        t0 = time.perf_counter()
         self._get_wx()
+        t1 = time.perf_counter()
         self._listen_all()
+        t2 = time.perf_counter()
+        log.info(
+            "[启动] 连接微信窗口 %.1fs + 挂监听 %.1fs = 合计 %.1fs",
+            t1 - t0, t2 - t1, t2 - t0,
+        )
 
     def _listen_all(self) -> None:
         if self._listening:
@@ -138,10 +150,18 @@ class WeChatClient:
             if self._accept(incoming):
                 self._queue.put(incoming)
 
+        # 分步计时：AddListenAll 会读全部会话（get_sessions），是这条路上的大头。
+        t0 = time.perf_counter()
         try:
             wx.AddListenAll(_on_message, discover=False)
+            t1 = time.perf_counter()
             self._prune_group_sessions(wx)
             wx.StartListening()
+            t2 = time.perf_counter()
+            log.info(
+                "[启动] 注册全局监听 %.1fs + 摘群会话/起轮询 %.1fs",
+                t1 - t0, t2 - t1,
+            )
         except Exception:  # noqa: BLE001 - 监听失败不阻断启动
             return
         self._listening = True

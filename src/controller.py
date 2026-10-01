@@ -76,6 +76,9 @@ class BotController:
         # 新线程又起」时两个循环并发。循环用自己那一代做退出判断。
         self._generation = 0
         self._running = False
+        # 正在连接微信（prepare 很慢：要整库解密，见 wechat_client.prepare）。
+        # 面板靠它显示「连接中…」，而不是把这段时间误报成「已暂停」。
+        self._starting = False
         self.last_error = ""
 
     # ---------- 生命周期 ----------
@@ -108,6 +111,17 @@ class BotController:
         """开始/恢复自动回复；已运行则直接返回 True，准备失败返回 False。"""
         if self._running:
             return True
+        if self._starting:
+            return True  # 已经在连了，重复点击直接忽略，别把解密重活跑两遍
+
+        # 连接微信要整库解密，可能几十秒；置位让面板显示「连接中…」。
+        self._starting = True
+        try:
+            return self._start_locked()
+        finally:
+            self._starting = False
+
+    def _start_locked(self) -> bool:
         if not self._ensure_ready():
             return False
 
@@ -175,6 +189,7 @@ class BotController:
         """控制面板需要的整体状态。"""
         return {
             "running": self._running,
+            "starting": self._starting,
             "last_error": self.last_error,
             "persona": self.get_persona(),
             "llm": self.get_llm_settings(),
