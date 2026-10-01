@@ -47,6 +47,57 @@ fn backend_main_py() -> PathBuf {
     project_root().join("src").join("main.py")
 }
 
+/// 从仓库根的 .env 读取 UI_TOKEN。
+///
+/// 桌面壳和后端同机，走的是 127.0.0.1——本机访问不该让人再手填一次令牌。
+/// 后端设了 UI_TOKEN（为了手机远程访问）时，这里把它取出来拼进 URL，
+/// 窗口就能直接进面板。令牌只在运行时从 .env 读，不写进代码、不进仓库。
+///
+/// 读不到（文件不存在/没设令牌）就返回空串：后端未设令牌时本就不需要它，
+/// 行为与从前完全一致。
+fn read_ui_token() -> String {
+    match std::fs::read_to_string(project_root().join(".env")) {
+        Ok(text) => parse_ui_token(&text),
+        Err(_) => String::new(),
+    }
+}
+
+/// 从 .env 文本里取出 UI_TOKEN 的值（纯函数，便于单测）。
+fn parse_ui_token(text: &str) -> String {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("UI_TOKEN") else {
+            continue;
+        };
+        // 必须紧跟 '='，避免把 UI_TOKEN_XXX 之类的键误当成它。
+        let Some(value) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim();
+        // .env 惯例：'#' 前有空白才算行内注释。
+        let value = match value.find(" #") {
+            Some(i) => value[..i].trim(),
+            None => value,
+        };
+        return value.trim_matches(|c| c == '"' || c == '\'').to_string();
+    }
+    String::new()
+}
+
+/// 拼后端 URL；令牌非空时带上 ?token=，前端会自动收进 localStorage。
+fn build_backend_url(token: &str) -> url::Url {
+    let mut url = format!("http://127.0.0.1:{}", BACKEND_PORT)
+        .parse::<url::Url>()
+        .expect("硬编码后端 URL 无效");
+    if !token.is_empty() {
+        url.query_pairs_mut().append_pair("token", token);
+    }
+    url
+}
+
 /// WebView2 用户数据目录。
 /// 放到用户主目录下（非 AppData）自己可写的位置，避免某些受限环境的写入限制。
 fn webview_data_dir() -> PathBuf {
@@ -98,7 +149,8 @@ pub fn run() {
                     panic!("无法启动 Python 后端（{} {}）: {}", py, main_py.display(), e)
                 });
 
-            // 后端要先连微信、再绑端口，需要几秒；等它就绪再开窗口，避免先看到连接失败页。
+            // 后端现在先把端口绑好、再在后台连微信（见 src/main.py），所以这里通常
+            // 毫秒级就绪。仍保留等待是兜底：万一端口被占或启动异常，也先等一会儿再开窗。
             if !wait_for_backend(Duration::from_secs(15)) {
                 eprintln!("警告：Python 后端 15 秒内未就绪，窗口可能显示连接失败，请查看后端日志。");
             }
@@ -109,11 +161,9 @@ pub fn run() {
                 eprintln!("警告：创建 WebView2 数据目录失败 {}：{}", data_dir.display(), e);
             }
 
-            let url = WebviewUrl::External(
-                format!("http://127.0.0.1:{}", BACKEND_PORT)
-                    .parse::<url::Url>()
-                    .expect("硬编码后端 URL 无效"),
-            );
+            // 后端设了 UI_TOKEN 时，本机窗口也免填：拼进查询参数，
+            // 前端 bootstrapToken() 会把它收进 localStorage 并从地址栏抹掉。
+            let url = WebviewUrl::External(build_backend_url(&read_ui_token()));
 
             if let Err(e) = WebviewWindowBuilder::new(app.handle(), "main", url)
                 .title("微信自动回复")
@@ -150,4 +200,61 @@ pub fn run() {
             app.state::<Backend>().kill();
         }
     });
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ui_token_basic() {
+        assert_eq!(parse_ui_token("UI_TOKEN=abc123\n"), "abc123");
+    }
+
+    #[test]
+    fn parse_ui_token_ignores_comments_and_other_keys() {
+        let text = "# UI_TOKEN=nope\nLLM_API_KEY=sk-x\nUI_TOKEN=real\n";
+        assert_eq!(parse_ui_token(text), "real");
+    }
+
+    #[test]
+    fn parse_ui_token_strips_quotes_and_inline_comment() {
+        assert_eq!(parse_ui_token("UI_TOKEN=\"abc\"\n"), "abc");
+        assert_eq!(parse_ui_token("UI_TOKEN=abc # 说明\n"), "abc");
+        assert_eq!(parse_ui_token("  UI_TOKEN = spaced  \n"), "spaced");
+    }
+
+    #[test]
+    fn parse_ui_token_not_confused_by_prefix() {
+        // UI_TOKEN_EXTRA 不该被当成 UI_TOKEN
+        assert_eq!(parse_ui_token("UI_TOKEN_EXTRA=wrong\nUI_TOKEN=right\n"), "right");
+    }
+
+    #[test]
+    fn parse_ui_token_empty_when_absent_or_blank() {
+        assert_eq!(parse_ui_token("LLM_API_KEY=x\n"), "");
+        assert_eq!(parse_ui_token("UI_TOKEN=\n"), ""); // 未设令牌 → 空，行为同从前
+        assert_eq!(parse_ui_token(""), "");
+    }
+
+    #[test]
+    fn build_backend_url_without_token_has_no_query() {
+        assert_eq!(build_backend_url("").as_str(), "http://127.0.0.1:8000/");
+    }
+
+    #[test]
+    fn build_backend_url_with_token_appends_query() {
+        assert_eq!(
+            build_backend_url("test-token-abc123").as_str(),
+            "http://127.0.0.1:8000/?token=test-token-abc123"
+        );
+    }
+
+    #[test]
+    fn build_backend_url_encodes_special_chars() {
+        // 令牌含需转义字符时也不能拼出非法 URL
+        assert_eq!(
+            build_backend_url("a b&c").as_str(),
+            "http://127.0.0.1:8000/?token=a+b%26c"
+        );
+    }
 }
