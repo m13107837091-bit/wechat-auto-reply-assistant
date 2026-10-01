@@ -100,6 +100,17 @@
   }
   .toast.show { opacity: 1; }
   .toast.err { background: #3a2321; color: #e8a7a3; border-color: var(--danger); }
+
+  /* 令牌输入弹层（仅远程访问需要时出现） */
+  .modal {
+    position: fixed; inset: 0; z-index: 20;
+    background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-box {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px; width: 100%; max-width: 360px;
+  }
 </style>
 </head>
 <body>
@@ -172,6 +183,17 @@
 
 <div class="toast" id="toast"></div>
 
+<div class="modal hidden" id="tokenModal">
+  <div class="modal-box">
+    <h2 style="font-size:16px;margin:0 0 6px">需要访问令牌</h2>
+    <p style="color:var(--muted);font-size:12px;margin:0 0 12px">这是远程访问，请填写你在电脑上设置的 UI_TOKEN。</p>
+    <input type="password" id="tokenInput" placeholder="访问令牌" autocomplete="off">
+    <div class="actions">
+      <button onclick="saveToken()">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let status = { running: false, persona: {} };
 let llm = { has_api_key: false, api_key_masked: "", base_url: "", model: "" };
@@ -183,9 +205,45 @@ function showToast(msg, isErr) {
   setTimeout(() => t.className = 'toast', 2200);
 }
 
+// ---- 访问令牌（远程访问时后端要求；本机不设 UI_TOKEN 则完全不涉及）----
+const TOKEN_KEY = 'ui_token';
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+
+function bootstrapToken() {
+  const t = new URLSearchParams(location.search).get('token');
+  if (t) {
+    localStorage.setItem(TOKEN_KEY, t.trim());
+    history.replaceState(null, '', location.pathname);  // 不把令牌留在地址栏/历史
+  }
+}
+
+function showTokenPrompt() {
+  const modal = document.getElementById('tokenModal');
+  if (modal.classList.contains('hidden')) {
+    modal.classList.remove('hidden');
+    const input = document.getElementById('tokenInput');
+    input.value = getToken();
+    input.focus();
+  }
+}
+
+function saveToken() {
+  localStorage.setItem(TOKEN_KEY, document.getElementById('tokenInput').value.trim());
+  document.getElementById('tokenModal').classList.add('hidden');
+  refresh();
+}
+
 async function api(path, opts) {
-  const resp = await fetch(path, opts);
+  opts = opts || {};
+  const headers = Object.assign({}, opts.headers || {});
+  const token = getToken();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const resp = await fetch(path, Object.assign({}, opts, { headers: headers }));
   const data = await resp.json().catch(() => ({}));
+  if (resp.status === 401) {
+    showTokenPrompt();
+    throw new Error(data.error || '需要访问令牌');
+  }
   if (!resp.ok) throw new Error(data.error || ('请求失败 ' + resp.status));
   return data;
 }
@@ -317,8 +375,12 @@ function toggleKey() {
   btn.textContent = show ? '隐藏' : '显示';
 }
 
+bootstrapToken();
 refresh();
-setInterval(() => refresh(true), 5000);
+setInterval(() => {
+  // 令牌弹层开着时不要后台轮询（避免反复 401）
+  if (document.getElementById('tokenModal').classList.contains('hidden')) refresh(true);
+}, 5000);
 </script>
 </body>
 </html>

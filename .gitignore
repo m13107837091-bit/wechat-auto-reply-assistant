@@ -24,9 +24,11 @@ config.local.*
 persona.json
 settings.local.json
 
-# ===== wechatauto 运行时产物（微信本地数据库/解密密钥/OCR 临时文件，绝不入库）=====
+# ===== wechatauto 运行时产物（微信本地数据库/解密密钥/日志/OCR 临时文件，绝不入库）=====
 wechatauto_db/
+wechatauto_logs/
 wechatauto_ocr_tmp.png
+pytest-cache-files-*/
 
 # ===== 编辑器/系统 =====
 .idea/

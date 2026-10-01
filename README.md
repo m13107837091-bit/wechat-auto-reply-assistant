@@ -67,7 +67,12 @@ wechat-auto-reply-assistant/
 │   ├── wechat_client.py    # wechatauto 封装（收/发消息）
 │   ├── llm.py              # OpenAI 兼容大模型客户端
 │   ├── bot.py              # 过滤 + 组装 + 回复逻辑
+│   ├── controller.py       # 可启停的机器人核心（供控制面板调用）
+│   ├── webui.py            # 本地/远程 Web 控制面板（含可选令牌鉴权）
 │   └── session.py          # 会话记忆
+├── web/
+│   └── index.html          # 控制面板页面（移动端自适应）
+├── desktop/                # Tauri 桌面壳（可选，启动时拉起 Python 后端）
 └── tests/
     └── test_bot.py         # 核心逻辑单元测试
 ```
@@ -107,6 +112,8 @@ copy .env.example .env
 | `LLM_MODEL` | 模型名，如 `deepseek-chat` |
 | `SEARCH_PROVIDER` | 联网搜索后端，目前支持 `tavily`（可选，留空则关闭搜索） |
 | `SEARCH_API_KEY` | Tavily 的 API Key（`https://tavily.com` 有免费额度） |
+| `UI_HOST` | 控制面板监听地址：`127.0.0.1`（默认，仅本机）/ `0.0.0.0`（手机等外部设备可访问） |
+| `UI_TOKEN` | 远程访问令牌；设了才启用鉴权，`UI_HOST=0.0.0.0` 时**必须**设 |
 
 ### 3. 运行
 
@@ -119,6 +126,37 @@ python -m src.main
 启动后程序会连接 PC 微信并开始监听；给机器人发消息即可测试，`Ctrl+C` 退出。
 
 > ⚠️ 运行期间请**保持 PC 微信窗口可用**（不要最小化到托盘、不要锁屏），并确保微信版本与 wechatauto-replica 支持版本匹配（见下）。
+
+## 📱 手机远程控制（可选）
+
+机器人必须留在 PC（依赖电脑版微信登录），但控制面板可以在**手机浏览器**里远程打开——开关自动回复、改人设、填 API Key、看状态。
+
+**1. 在 `.env` 里打开远程监听并设一个令牌：**
+
+```ini
+UI_HOST=0.0.0.0
+UI_TOKEN=一串随机长令牌
+```
+
+令牌生成：`python -c "import secrets;print(secrets.token_urlsafe(24))"`
+
+**2. 放行防火墙（管理员 CMD / PowerShell，只需一次）：**
+
+```bat
+netsh advfirewall firewall add rule name="wechat-bot-ui" dir=in action=allow protocol=TCP localport=8000
+```
+
+**3. 启动后端，手机打开：**
+
+```bash
+python -m src.main
+```
+
+- **同一 Wi-Fi**：手机浏览器开 `http://<电脑局域网IP>:8000/?token=<你的令牌>`（电脑 IP 用 `ipconfig` 查）。
+- **随时随地（推荐 Tailscale）**：电脑和手机各装 [Tailscale](https://tailscale.com/) 并登录同一账号，手机用电脑的 Tailscale IP（`100.x.x.x`）访问同一地址。零端口映射、全程加密、不暴露公网。
+- 也可用 `ngrok http 8000` 快速拿一个临时公网地址（免费版地址每次重启会变，务必靠令牌挡人）。
+
+> 🔐 只要 `UI_HOST=0.0.0.0` 就**务必设 `UI_TOKEN`**：不设则同网/公网任何人都能操控你的机器人。设了令牌后，页面本身可打开，但所有操作都需令牌；令牌会记在手机浏览器里，之后直接开 `http://<IP>:8000/` 即可。只想本机用就保持默认 `UI_HOST=127.0.0.1`（无需令牌）。
 
 ## 🎛 配置说明（`config.yaml`）
 
