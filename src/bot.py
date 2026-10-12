@@ -1,7 +1,9 @@
 """核心编排：消息过滤、群聊@、关键词、限速、夜间静默、上下文切片与回复。"""
 from __future__ import annotations
 
+import random
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Sequence
 
@@ -33,6 +35,29 @@ class RateLimiter:
     def record(self, now: float) -> None:
         self._timestamps.append(now)
         self._last = now
+
+
+# 「因为 LLM 挂了而退到兜底话术」的原因码。它和别的 reason 不同：这条**确实发出去了**，
+# 所以 action 仍然是 replied，只是要标出来这不是正常生成。
+REASON_LLM_FAILED = "llm_failed"
+
+
+@dataclass(frozen=True)
+class Decision:
+    """一条消息的处理结论。
+
+    - `reply`      要发出去的文本；None 表示不回。
+    - `reason`     为什么是这个结论。不回时是原因码（见 `Bot.reject_reason`）；
+                   回复时为空，除非走了兜底话术（`llm_failed`）。
+    - `llm_failed` 是否因为 LLM 调用失败而退到了兜底话术。
+
+    为什么要这个类型：面板的「最近动态」必须回答"它为什么没回这个人"，
+    只返回一个字符串的话，沉默就无从解释了（契约见 docs/plan-desktop-app.md `8.1）。
+    """
+
+    reply: str | None = None
+    reason: str = ""
+    llm_failed: bool = False
 
 
 class Bot:
@@ -104,6 +129,9 @@ class Bot:
         if is_group:
             if not cfg.group_enabled:
                 return "group_disabled"
+            # 群聊白名单：只回名单里的群（不看这个的话，开了群聊就会到处插话）
+            if cfg.group_whitelist and not self._in_list(chat, cfg.group_whitelist):
+                return "not_in_group_whitelist"
         else:
             if not cfg.friend_enabled:
                 return "friend_disabled"
@@ -113,8 +141,16 @@ class Bot:
         if cfg.blacklist and (self._in_list(chat, cfg.blacklist) or (sender and self._in_list(sender, cfg.blacklist))):
             return "in_blacklist"
 
-        if is_group and cfg.group_only_when_mentioned and not self._is_mentioned(at_list, cfg.group_self_nickname):
-            return "not_mentioned"
+        if is_group:
+            # 群里说话的门槛，两种玩法二选一：
+            #   ① 配了关键词 → 消息里出现关键词（或 @ 到三哥）才回，比如「三哥/老三」被提到时插一句嘴；
+            #   ② 没配关键词 → 沿用 only_when_mentioned（默认 true = 只有被 @ 才回）。
+            mentioned = self._is_mentioned(at_list, cfg.group_self_nickname)
+            if cfg.group_trigger_keywords:
+                if not (mentioned or any(k in content for k in cfg.group_trigger_keywords)):
+                    return "group_keyword_not_matched"
+            elif cfg.group_only_when_mentioned and not mentioned:
+                return "not_mentioned"
 
         if cfg.keyword_trigger and not any(k in content for k in cfg.keyword_trigger):
             return "keyword_not_matched"
@@ -152,17 +188,18 @@ class Bot:
         refs = "\n".join(f"- {r.title}：{r.snippet}" for r in results)
         return f"[以下是与问题相关的实时搜索结果，回答时请参考、不要编造]：\n{refs}"
 
-    def on_message(
+    def respond(
         self,
         chat: str,
         content: str,
         is_group: bool,
         sender: str = "",
         at_list: Sequence[str] | None = None,
-    ) -> str | None:
-        """处理一条消息；返回要发送的回复文本，或 None（不回复）。"""
-        if self.reject_reason(chat, content, is_group, sender, at_list):
-            return None
+    ) -> Decision:
+        """处理一条消息，返回「回什么 + 为什么」。"""
+        reason = self.reject_reason(chat, content, is_group, sender, at_list)
+        if reason:
+            return Decision(None, reason)
 
         key = self._session_key(chat, is_group)
         user_text = self._user_text(content, is_group, sender)
@@ -175,14 +212,39 @@ class Bot:
             {"role": "user", "content": prompt_user},
         ]
 
+        llm_failed = False
         try:
             reply = self.llm.chat(messages)
         except LLMError:
-            reply = self.config.reply.fallback_reply
+            # 兜底话术仍然算"回了"（字确实发出去了），但要标出这是降级而非正常生成。
+            reply = self._fallback_reply()
             if not reply:
-                return None
+                return Decision(None, REASON_LLM_FAILED)
+            llm_failed = True
 
         self.sessions.append(key, "user", user_text)
         self.sessions.append(key, "assistant", reply)
         self.limiter.record(time.time())
-        return reply
+        return Decision(reply, llm_failed=llm_failed)
+
+    def _fallback_reply(self) -> str:
+        """大模型挂了时的兜底话术。
+
+        配了 fallback_replies 就随机挑一句 —— 每次都同一句，三哥的朋友很快就能
+        看出来对面是台复读机；轮着说至少不刺眼。
+        """
+        options = [s.strip() for s in self.config.reply.fallback_replies if s and s.strip()]
+        if options:
+            return random.choice(options)
+        return self.config.reply.fallback_reply
+
+    def on_message(
+        self,
+        chat: str,
+        content: str,
+        is_group: bool,
+        sender: str = "",
+        at_list: Sequence[str] | None = None,
+    ) -> str | None:
+        """只要回复文本的旧入口，保留给单测与其它调用方。"""
+        return self.respond(chat, content, is_group, sender, at_list).reply

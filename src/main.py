@@ -6,7 +6,8 @@
 - ``python -m src.main``
 - 直接在 PyCharm 里右键运行本文件（脚本方式）
 
-环境变量：``UI_HOST``（默认 127.0.0.1）、``UI_PORT``（默认 8000）。
+环境变量：``UI_HOST``（默认 127.0.0.1）、``UI_PORT``（默认 8000）、
+``BOT_AUTOREPLY_ON_START``（默认 1；设 0 则启动后只连微信、保持暂停）。
 """
 from __future__ import annotations
 
@@ -40,6 +41,16 @@ def main() -> int:
         log.error("UI_PORT 必须是数字，当前值为 %r", os.getenv("UI_PORT"))
         return 2
 
+    # 启动时是否自动开启自动回复。默认开启（保持「一运行就回消息」的旧行为）；
+    # 设 BOT_AUTOREPLY_ON_START=0 时仍会连接微信（面板状态正常），但不开始回复，
+    # 等你从面板手动开启 —— 用于无人值守场景，避免不在场时自动替用户回消息。
+    auto_reply_on_start = os.getenv("BOT_AUTOREPLY_ON_START", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
     # 先把面板绑起来（毫秒级），再后台连微信。
     # 连接微信要整库解密、可能几十秒，若放在这里同步做，端口在这期间根本没监听，
     # 桌面壳/手机就只能对着白屏干等。倒过来后界面秒开，状态显示「连接中…」。
@@ -56,11 +67,22 @@ def main() -> int:
     # last_error 会经 /api/status 显示在面板上，而不是只打在控制台里。
     def _boot() -> None:
         started = time.perf_counter()
-        ok = controller.start()
-        if ok:
-            log.info("启动完成，耗时 %.1fs。", time.perf_counter() - started)
-        else:
-            log.error("%s", controller.last_error)
+        if not auto_reply_on_start:
+            # 只连微信、保持暂停：不替用户自动回消息。
+            # 走 warm_up() 而不是 connect()：单次连接在微信还没启动时会一路失败，
+            # 于是你在外面按下「开始回复」的那一下，才要开始干等 55～76 秒的整库解密。
+            # 后台连 + 失败退避重试，就能在你出门前把这条路铺好。
+            controller.warm_up()
+            log.info(
+                "BOT_AUTOREPLY_ON_START=0：后台预热微信连接，自动回复保持暂停，请在面板里开启。"
+            )
+            return
+        if not controller.start():
+            # 一次性失败不该就此躺平：交给预热线程退避重试，连上就自动开始回复。
+            controller.warm_up(auto_start=True)
+            log.error("%s；改为后台重试，连上即开始回复。", controller.last_error)
+            return
+        log.info("启动完成，耗时 %.1fs。", time.perf_counter() - started)
 
     threading.Thread(target=_boot, name="bot-startup", daemon=True).start()
     try:

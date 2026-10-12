@@ -16,6 +16,10 @@ PERSONA_FILE = PROJECT_ROOT / "persona.json"
 # 面板里填写的 LLM 连接设置（含 API Key）持久化到该文件，优先级高于 .env / config.yaml。
 # 已在 .gitignore 忽略 —— key 绝不入库。
 LLM_SETTINGS_FILE = PROJECT_ROOT / "settings.local.json"
+# 面板里编辑的黑白名单持久化到该文件，覆盖 config.yaml 里的默认值。
+# 单独放一个文件是为了**永不改写 config.yaml** —— 那是手写带注释的策略文件，
+# 用 YAML 写回会把注释和人肉排版全吃掉。
+LISTS_FILE = PROJECT_ROOT / "lists.local.json"
 
 # 默认联网搜索触发关键词（命中即认为该问题可能需要实时信息）
 DEFAULT_SEARCH_KEYWORDS: tuple[str, ...] = (
@@ -48,10 +52,18 @@ class ReplyConfig:
     night_silence_start: str = "23:30"
     night_silence_end: str = "07:00"
     fallback_reply: str = "（自动回复）我现在不方便回复，稍后联系。"
+    # 兜底话术可多条：大模型出错时随机挑一句（留空 = 用上面的 fallback_reply）
+    fallback_replies: list[str] = field(default_factory=list)
     group_enabled: bool = True
     group_only_when_mentioned: bool = True
     group_self_nickname: str = ""
+    # 群聊白名单：只回这些群（按显示名匹配）；留空 = 所有群都回（前提是 group_enabled）
+    group_whitelist: list[str] = field(default_factory=list)
+    # 群里只有消息命中其中任一关键词才回；留空 = 群里每条都回
+    group_trigger_keywords: list[str] = field(default_factory=list)
     friend_enabled: bool = True
+    # 只回"个人"：群聊 / 公众号服务号 / 企业微信 / 微信系统号一律不回（见 wechat_client）
+    friend_only_person: bool = True
 
 
 @dataclass
@@ -92,6 +104,7 @@ class AppConfig:
         config_path: str | Path | None = None,
         persona_path: str | Path | None = None,
         settings_path: str | Path | None = None,
+        lists_path: str | Path | None = None,
     ) -> "AppConfig":
         load_dotenv(PROJECT_ROOT / ".env")
         path = Path(config_path) if config_path else (PROJECT_ROOT / "config.yaml")
@@ -123,12 +136,16 @@ class AppConfig:
         cfg.reply.night_silence_start = str(night.get("start", cfg.reply.night_silence_start))
         cfg.reply.night_silence_end = str(night.get("end", cfg.reply.night_silence_end))
         cfg.reply.fallback_reply = str(reply_raw.get("fallback_reply", cfg.reply.fallback_reply))
+        cfg.reply.fallback_replies = _as_str_list(reply_raw.get("fallback_replies"))
         group = reply_raw.get("group") or {}
         cfg.reply.group_enabled = bool(group.get("enabled", cfg.reply.group_enabled))
         cfg.reply.group_only_when_mentioned = bool(group.get("only_when_mentioned", cfg.reply.group_only_when_mentioned))
         cfg.reply.group_self_nickname = str(group.get("self_nickname", "") or "")
+        cfg.reply.group_whitelist = _as_str_list(group.get("whitelist"))
+        cfg.reply.group_trigger_keywords = _as_str_list(group.get("trigger_keywords"))
         friend = reply_raw.get("friend") or {}
         cfg.reply.friend_enabled = bool(friend.get("enabled", cfg.reply.friend_enabled))
+        cfg.reply.friend_only_person = bool(friend.get("only_person", cfg.reply.friend_only_person))
 
         session_raw = raw.get("session") or {}
         cfg.session.max_turns = int(session_raw.get("max_turns", cfg.session.max_turns))
@@ -152,6 +169,7 @@ class AppConfig:
         cfg.validate()
         _apply_persona_overrides(cfg, persona_path)
         _apply_llm_settings_overrides(cfg, settings_path)
+        _apply_lists_overrides(cfg, lists_path)
         return cfg
 
     def validate(self) -> None:
@@ -267,3 +285,43 @@ def _apply_llm_settings_overrides(cfg: AppConfig, path: str | Path | None) -> No
     # api_key 允许覆盖为空串（即清空 key）
     if "api_key" in ov:
         llm.api_key = str(ov["api_key"]).strip()
+
+
+def _load_lists(path: str | Path | None = None) -> dict[str, Any]:
+    """读取 lists.local.json 里的黑白名单；缺失/损坏时返回空 dict。"""
+    p = Path(path) if path else LISTS_FILE
+    try:
+        raw: Any = json.loads(p.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_lists(overrides: dict[str, Any], path: str | Path | None = None) -> None:
+    """把黑白名单持久化到 lists.local.json（不碰带注释的 config.yaml）。"""
+    p = Path(path) if path else LISTS_FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _apply_lists_overrides(cfg: AppConfig, path: str | Path | None) -> None:
+    """把 lists.local.json 的名单叠加到 config，优先级高于 config.yaml。
+
+    只处理文件里**出现过**的键：面板只存用户改过的名单，没改的那份继续用
+    config.yaml 里的值。
+    """
+    ov = _load_lists(path)
+    if not ov:
+        return
+    if "whitelist" in ov:
+        cfg.reply.whitelist = _as_str_list(ov.get("whitelist"))
+    if "blacklist" in ov:
+        cfg.reply.blacklist = _as_str_list(ov.get("blacklist"))
+    if "only_person" in ov:
+        cfg.reply.friend_only_person = bool(ov.get("only_person"))
+    if "group_enabled" in ov:
+        cfg.reply.group_enabled = bool(ov.get("group_enabled"))
+    if "group_whitelist" in ov:
+        cfg.reply.group_whitelist = _as_str_list(ov.get("group_whitelist"))
+    if "group_trigger_keywords" in ov:
+        cfg.reply.group_trigger_keywords = _as_str_list(ov.get("group_trigger_keywords"))

@@ -3,9 +3,14 @@
 提供页面与 JSON API：
 
 - ``GET  /``            -> 控制面板页面 web/index.html
+- ``GET  /manifest.json`` ``/icon-*.png`` ``/apple-touch-icon.png`` ``/favicon.png``
+                       -> 手机主屏图标与 PWA 清单（**免令牌**，见 PUBLIC_FILES）
 - ``GET  /api/status``  -> controller.snapshot()
+- ``GET  /api/recent``  -> 最近动态（`?limit=N`，默认 50，上限 200）
 - ``POST /api/start``   -> 开始/恢复自动回复
 - ``POST /api/stop``    -> 暂停自动回复
+- ``GET  /api/lists``   -> 黑白名单（含 open_to_all 提示）
+- ``POST /api/lists``   -> 更新黑白名单（body 为 JSON，改完立即生效）
 - ``POST /api/persona`` -> 更新人设（body 为 JSON）
 - ``POST /api/llm``     -> 更新 LLM 连接设置（key/base_url/model）
 - ``POST /api/llm/test``-> 连通性自检
@@ -30,6 +35,28 @@ from .controller import BotController
 log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+# 免令牌的静态资源：页面、图标、PWA 清单。
+# 两个理由：① 这些文件不含任何机密（令牌、聊天内容都不在里面）；
+# ② 浏览器抓取 HTML 的子资源（图标、manifest）时**不会**带 Authorization 头，
+#    纳入鉴权只会让图标裂图、"添加到主屏幕"失败。真正的数据与操作都在 /api/* 上鉴权。
+PUBLIC_FILES = {
+    "/": "index.html",
+    "/index.html": "index.html",
+    "/manifest.json": "manifest.json",
+    "/favicon.png": "favicon.png",
+    "/favicon.ico": "favicon.ico",
+    "/icon-192.png": "icon-192.png",
+    "/icon-512.png": "icon-512.png",
+    "/apple-touch-icon.png": "apple-touch-icon.png",
+}
+
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".json": "application/manifest+json; charset=utf-8",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+}
 
 
 class ControlHandler(BaseHTTPRequestHandler):
@@ -83,23 +110,47 @@ class ControlHandler(BaseHTTPRequestHandler):
         return secrets.compare_digest(self._presented_token(), token)
 
     def _unauthorized(self) -> None:
+        # 先把请求体读掉再回 401。不读的话，客户端还在往外发 body、服务端已经走人，
+        # Windows 上会变成「连接被中止」而不是一个干净的 401（面板只能报网络错误，
+        # 看不出其实是令牌不对）。
+        self._read_body()
         self._send_json({"error": "需要访问令牌"}, code=401)
 
     # ---- 路由 ----
     def do_GET(self) -> None:
         path = urlparse(self.path).path
-        if path == "/":
-            # 页面本身不含机密，始终可打开（前端会按需提示输入令牌）；
+        if path in PUBLIC_FILES:
+            # 页面/图标/清单不含机密，始终可打开（前端会按需提示输入令牌）；
             # 真正的数据与操作都在 /api/* 上鉴权。
-            self._serve_index()
+            self._serve_static(PUBLIC_FILES[path])
             return
         if not self._authorized():
             self._unauthorized()
             return
         if path == "/api/status":
             self._send_json(self.server.controller.snapshot())
+        elif path == "/api/recent":
+            self._send_json(self.server.controller.activity.snapshot(self._recent_limit()))
+        elif path == "/api/lists":
+            self._send_json(self.server.controller.get_lists())
         else:
             self._send_json({"error": "not found"}, code=404)
+
+    # 「最近动态」一次最多回多少条。200 与缓冲容量一致 —— 要更大也只是把整个缓冲
+    # 倒出来，没有意义，但必须挡住离谱的 limit 值（面板在公网上是可达的）。
+    MAX_RECENT = 200
+    DEFAULT_RECENT = 50
+
+    def _recent_limit(self) -> int:
+        """解析 `?limit=`；非法或缺失退回默认值，不因为一个坏参数就 500。"""
+        values = parse_qs(urlparse(self.path).query).get("limit")
+        if not values:
+            return self.DEFAULT_RECENT
+        try:
+            limit = int(values[0])
+        except (TypeError, ValueError):
+            return self.DEFAULT_RECENT
+        return max(0, min(limit, self.MAX_RECENT))
 
     def do_POST(self) -> None:
         if not self._authorized():
@@ -113,6 +164,17 @@ class ControlHandler(BaseHTTPRequestHandler):
         elif path == "/api/stop":
             controller.stop()
             self._send_json({"ok": True, **controller.snapshot()})
+        elif path == "/api/reconnect":
+            # 后台重连：立刻返回，进度看 /api/status 的 warm.state
+            started = controller.reconnect()
+            self._send_json({"ok": started, **controller.snapshot()})
+        elif path == "/api/lists":
+            try:
+                updated = controller.update_lists(self._read_body())
+            except (ValueError, TypeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, code=400)
+                return
+            self._send_json({"ok": True, "lists": updated})
         elif path == "/api/persona":
             try:
                 updated = controller.update_persona(self._read_body())
@@ -129,18 +191,24 @@ class ControlHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": "not found"}, code=404)
 
-    def _serve_index(self) -> None:
+    def _serve_static(self, name: str) -> None:
+        """发一个免令牌的静态文件（页面 / 图标 / PWA 清单）。"""
+        file = WEB_DIR / name
         try:
-            body = (WEB_DIR / "index.html").read_bytes()
+            body = file.read_bytes()
         except OSError:
-            self._send_json({"error": "缺 web/index.html"}, code=500)
+            self._send_json({"error": "缺 web/" + name}, code=500)
             return
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        # 页面必须每次取最新的：手机浏览器对无缓存头的 HTML 会长期缓存，
-        # 一旦缓存到旧版本（例如加令牌逻辑之前的那份），改令牌/点按钮都会「没反应」。
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.send_header("Pragma", "no-cache")
+        self.send_header("Content-Type", CONTENT_TYPES.get(file.suffix, "application/octet-stream"))
+        if file.suffix == ".html":
+            # 页面必须每次取最新的：手机浏览器对无缓存头的 HTML 会长期缓存，
+            # 一旦缓存到旧版本（例如加令牌逻辑之前的那份），改令牌/点按钮都会「没反应」。
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+        else:
+            # 图标/清单内容稳定，缓存一小时：既省流量，改图标后也不用等太久才更新。
+            self.send_header("Cache-Control", "public, max-age=3600")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -151,6 +219,13 @@ class ControlServer(ThreadingHTTPServer):
 
     controller: BotController
     token: str
+
+    # http.server.HTTPServer 默认 allow_reuse_address = 1（即 SO_REUSEADDR）。
+    # 在 Windows 上这个选项的语义与 POSIX 不同：它允许两个进程**同时**绑定同一
+    # 个端口，而且两边都会成功。实测后果是「端口被占用」的保护完全失效——两个
+    # 后端一起跑，面板请求被随机分给其中之一，甚至造成重复回复。
+    # 关掉它，第二个实例就会在 bind 时直接拿到 OSError 并退出（见 main.py 的提示）。
+    allow_reuse_address = False
 
     def __init__(
         self,

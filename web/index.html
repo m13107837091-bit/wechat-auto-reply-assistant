@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>微信自动回复 · 控制面板</title>
+<!-- 手机主屏图标 / 全屏观感：添加到主屏幕后像一个 App（批次 4） -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#101418">
+<link rel="icon" href="./favicon.png" type="image/png">
+<link rel="icon" href="./icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="自动回复">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
   :root {
     --bg: #101418;
@@ -45,6 +54,8 @@
   .dot.off { background: var(--danger); }
   /* 连接中：微信数据库解密要几十秒，用脉冲让「它在动」这件事看得见 */
   .dot.busy { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+  /* 待命（微信已连好、但没在回）：暗一档的绿，跟「运行中」区分开 */
+  .dot.ready { background: var(--accent); opacity: .45; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
   .err {
     margin-top: 12px;
@@ -57,8 +68,29 @@
     white-space: pre-wrap;
     word-break: break-all;
   }
+  /* 名单警告：白名单为空 = 谁都回，这条必须比普通说明更扎眼。 */
+  .warn {
+    margin: 2px 0 4px;
+    padding: 10px 12px;
+    background: rgba(213,100,95,.1);
+    border: 1px solid rgba(213,100,95,.35);
+    border-radius: 8px;
+    color: #e8a7a3;
+    font-size: 13px;
+    line-height: 1.6;
+  }
   /* 工具类必须能压过组件类：.modal 在下面也定义了 display，
      同权重时后者会赢，导致 class="modal hidden" 藏不住。用 !important 兜住。 */
+  /* 批次 6：收消息心跳那一行。灰=正常，红=疑似卡住（点「重连」自救） */
+  .beat {
+    margin-top: 10px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06);
+    color: var(--muted); font-size: 12px; line-height: 1.5;
+  }
+  .beat.warn {
+    background: rgba(213,100,95,.1); border: 1px solid rgba(213,100,95,.35);
+    color: #e8a7a3;
+  }
   .hidden { display: none !important; }
 
   button {
@@ -106,6 +138,32 @@
   .toast.show { opacity: 1; }
   .toast.err { background: #3a2321; color: #e8a7a3; border-color: var(--danger); }
 
+  /* 最近动态 */
+  .recent-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .recent-head h2 { font-size: 16px; margin: 0; }
+  .recent-counts { color: var(--muted); font-size: 12px; text-align: right; }
+  .recent-empty { color: var(--muted); font-size: 13px; margin-top: 10px; line-height: 1.7; }
+  .act { border-top: 1px solid var(--line); padding: 12px 0 4px; font-size: 13px; }
+  .act:first-child { border-top: 0; padding-top: 4px; }
+  .act-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .act-chat { font-weight: 600; }
+  .act-time { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .tag {
+    font-size: 11px; line-height: 1.7; padding: 0 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .tag.replied { color: #7fd6a8; border-color: rgba(58,166,117,.55); }
+  .tag.skipped { color: #d8c37a; border-color: rgba(216,195,122,.45); }
+  .tag.error   { color: #e8a7a3; border-color: rgba(213,100,95,.55); }
+  .tag.system  { color: #8ab4e8; border-color: rgba(138,180,232,.45); }
+  .bubble {
+    margin: 7px 0 0; padding: 8px 11px; border-radius: 9px;
+    background: #10161b; border: 1px solid var(--line);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .bubble.out { background: rgba(58,166,117,.12); border-color: rgba(58,166,117,.32); }
+  .act-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
   /* 令牌输入弹层（仅远程访问需要时出现） */
   .modal {
     position: fixed; inset: 0; z-index: 20;
@@ -129,10 +187,20 @@
         <span class="dot" id="dot"></span>
         <span id="statusText">加载中…</span>
       </div>
-      <button id="toggleBtn" onclick="toggle()">…</button>
+        <button class="secondary" onclick="reconnect()" style="font-size:12px;padding:6px 10px" title="微信掉线、卡住时点这里重连">重连</button>
+        <button id="toggleBtn" onclick="toggle()">…</button>
     </div>
     <div class="err hidden" id="err"></div>
-  </div>
+    <div class="beat hidden" id="beatLine"></div>
+    </div>
+
+    <div class="card">
+      <div class="recent-head">
+        <h2>最近动态</h2>
+        <span class="recent-counts" id="recentCounts"></span>
+      </div>
+      <div id="recentList" class="recent-empty">加载中…</div>
+    </div>
 
   <div class="card">
     <h2 style="font-size:16px;margin:0 0 4px">DeepSeek API 设置</h2>
@@ -184,6 +252,50 @@
       <button class="secondary" onclick="refresh()">重新加载</button>
     </div>
   </div>
+
+  <div class="card">
+    <h2 style="font-size:16px;margin:0 0 4px">谁能触发自动回复</h2>
+    <div id="listWarn" class="warn hidden"></div>
+
+    <div class="checkbox-row" style="margin:10px 0 2px">
+      <input type="checkbox" id="onlyPerson">
+      <label for="onlyPerson">只回个人（自动屏蔽群聊、公众号服务号、企业微信、系统号）</label>
+    </div>
+
+    <p style="color:var(--muted);font-size:12px;margin:8px 0 0">填微信里的备注名（跟聊天列表上显示的一样）。一行一个。</p>
+
+    <label for="whitelist">白名单：只回这些人（留空 = 不限制，所有好友都回）</label>
+    <textarea id="whitelist" placeholder="老冯&#10;三哥的同学" spellcheck="false"
+              autocapitalize="off" autocorrect="off" style="min-height:70px"></textarea>
+
+    <label for="blacklist">黑名单：永不回复</label>
+    <textarea id="blacklist" placeholder="（一般留空）" spellcheck="false"
+              autocapitalize="off" autocorrect="off" style="min-height:60px"></textarea>
+
+    <div class="checkbox-row" style="margin:16px 0 2px">
+      <input type="checkbox" id="groupEnabled">
+      <label for="groupEnabled">回复群聊（群里也交给它；建议配合下面的关键词用）</label>
+    </div>
+
+    <label for="groupWhitelist">群聊白名单：只回这些群（留空 = 所有群都回）</label>
+    <textarea id="groupWhitelist" placeholder="闲适老爸小屋" spellcheck="false"
+              autocapitalize="off" autocorrect="off" style="min-height:46px"></textarea>
+
+    <label for="groupKeywords">群里出现这些词才回（留空 = 群里每条都回）</label>
+    <textarea id="groupKeywords" placeholder="三哥&#10;老三&#10;三弟" spellcheck="false"
+              autocapitalize="off" autocorrect="off" style="min-height:46px"></textarea>
+
+    <p style="color:var(--muted);font-size:12px;margin:2px 0 0">
+      例：白名单填「闲适老爸小屋」+ 关键词填「三哥」，就是只在这个群里、有人提到三哥时才插话。
+    </p>
+
+    <p id="listHint" style="color:var(--muted);font-size:12px;margin:8px 0 0"></p>
+
+    <div class="actions">
+      <button onclick="saveLists()">保存名单</button>
+      <button class="secondary" onclick="refresh()">重新加载</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -209,7 +321,10 @@
 
 <script>
 let status = { running: false, persona: {} };
+let recent = { items: [], counts: {} };
 let llm = { has_api_key: false, api_key_masked: "", base_url: "", model: "" };
+let lists = { whitelist: [], blacklist: [], match_mode: 'exact', open_to_all: true,
+  only_person: true, group_enabled: false, group_whitelist: [], group_trigger_keywords: [] };
 
 function showToast(msg, isErr) {
   const t = document.getElementById('toast');
@@ -262,6 +377,7 @@ function saveToken() {
   autoRefresh = true;
   setToken(value);
   refresh();
+    refreshRecent();
 }
 
 function dismissToken() {
@@ -290,6 +406,62 @@ async function api(path, opts) {
   return data;
 }
 
+// 面板上那一行状态文字。分得细一点是有用的：用户最需要知道的是
+// 「现在能不能立刻开始回」，而不是笼统的「暂停」。
+function statusLabel(status, starting, warm) {
+  if (status.running) return '运行中 · 自动回复已开启';
+  if (starting) {
+    // 把已经等了多少秒说出来：连接真的要几十秒，不显示的话看着就像卡死了。
+    const waited = Math.round(status.starting_seconds || 0);
+    return '连接中 · 已等待 ' + waited + ' 秒（要解密微信数据库，一般 1 分钟左右）';
+  }
+  if (warm.state === 'ready') return '待命中 · 微信已连好，「开始回复」是秒开的';
+  if (warm.state === 'connecting') return '正在连接微信…';
+  if (warm.state === 'waiting') {
+    const n = warm.attempts || 0;
+    const wait = warm.retry_in > 0 ? Math.round(warm.retry_in) + ' 秒后自动重试' : '正在自动重试';
+    return '微信还没连上（已试 ' + n + ' 次）· ' + wait;
+  }
+  return '已暂停 · 不再自动回复';
+}
+
+// 收消息那一侧的心跳（批次 6）。以前面板只会说「运行中」，于是 2026-10-05
+// 机器人聋了一整晚，界面却一路显示正常 —— 状态来自标志位，而标志位不会因为
+// 线程死掉而变。现在把「最近一次轮询 / 最近一条消息 / 今日读到多少条」摆出来：
+// 「没人找它」和「它聋了」，一眼分得清。
+function fmtAgo(sec) {
+  if (sec == null) return '—';
+  if (sec < 1) return '刚刚';
+  if (sec < 60) return Math.round(sec) + ' 秒前';
+  if (sec < 3600) return Math.round(sec / 60) + ' 分钟前';
+  return Math.round(sec / 3600) + ' 小时前';
+}
+
+function renderBeat(status) {
+  const box = document.getElementById('beatLine');
+  if (!box) return;
+  const rec = status.receive || {};
+  if (!rec.available) { box.classList.add('hidden'); return; }
+  const c = rec.counts || {};
+  const dropped = (c.drop_self || 0) + (c.drop_type || 0) + (c.drop_empty || 0)
+    + (c.drop_group_off || 0) + (c.drop_group_not_allowed || 0) + (c.drop_not_person || 0);
+  const parts = [
+    '轮询 ' + (rec.poll_alive ? fmtAgo(rec.last_poll_ago) : '已停'),
+    '最近一条 ' + (rec.last_message_ago == null ? '今天还没有' : fmtAgo(rec.last_message_ago)),
+    '今日读到 ' + (c.read || 0) + ' 条',
+  ];
+  if (dropped) parts.push('丢弃 ' + dropped + ' 条');
+  const gf = rec.group_filter || {};
+  if (gf.whitelist) parts.push('只读 ' + gf.whitelist + ' 个群');
+  parts.push('在跟 ' + (rec.seen_chats || 0) + ' 个会话');
+  const line = '收消息：' + parts.join(' · ');
+  const stuck = !rec.poll_alive
+    || (rec.last_poll_ago != null && rec.last_poll_ago > 30);
+  box.className = stuck ? 'beat warn' : 'beat';
+  box.textContent = stuck ? ('⚠ ' + line + ' —— 点上面的「重连」自救') : line;
+  box.classList.remove('hidden');
+}
+
 function render() {
   const dot = document.getElementById('dot');
   const txt = document.getElementById('statusText');
@@ -297,12 +469,15 @@ function render() {
   const err = document.getElementById('err');
 
   const starting = !!status.starting;
-  dot.className = 'dot ' + (status.running ? 'on' : (starting ? 'busy' : 'off'));
-  txt.textContent = status.running
-    ? '运行中 · 自动回复已开启'
-    : (starting ? '连接中 · 正在解密微信数据库，首次启动较慢' : '已暂停 · 不再自动回复');
+  const warm = status.warm || {};
+  // 四个状态各有一个看得见的区别：亮绿=在回，暗绿=已备好待命，脉冲黄=正在连，灰=停着。
+  dot.className = 'dot ' + (status.running ? 'on'
+    : (starting || warm.state === 'connecting') ? 'busy'
+      : (warm.state === 'ready' ? 'ready' : 'off'));
+  txt.textContent = statusLabel(status, starting, warm);
+  renderBeat(status);   // 批次 6.1/6.2：收消息心跳
   btn.textContent = status.running ? '暂停回复' : (starting ? '连接中…' : '开始回复');
-  btn.disabled = starting;   // 连接中重复点击没有意义（后端也会忽略）
+  btn.disabled = starting;   // 连接中重复点击没有意义（后端会把意图记下）
   btn.className = status.running ? 'danger' : '';
 
   if (status.last_error) {
@@ -312,12 +487,109 @@ function render() {
     err.classList.add('hidden');
   }
 
+  // 只写「用户没在编辑」的字段。以前这里每 5 秒无条件覆盖一遍，正在敲的
+  // 提示词/性格会被原地重置回旧值 —— 怎么看都是「改了没反应」（exe 里敲长提示词尤其明显，
+  // 2026-10-05 三哥报的就是这个）。
   const p = status.persona || {};
-  document.getElementById('name').value = p.name || '';
-  document.getElementById('style').value = p.style || '';
-  document.getElementById('length').value = p.length || 'auto';
-  document.getElementById('emoji').checked = !!p.emoji;
-  document.getElementById('systemPrompt').value = p.system_prompt || '';
+  setUnlessFocused('name', p.name || '');
+  setUnlessFocused('style', p.style || '');
+  setUnlessFocused('length', p.length || 'auto');
+  setUnlessFocused('systemPrompt', p.system_prompt || '');
+  const emojiBox = document.getElementById('emoji');
+  if (document.activeElement !== emojiBox) emojiBox.checked = !!p.emoji;
+}
+
+// ---- 最近动态 ----
+// 后端只回原因码（night_silence 这类），中文文案留在前端：改措辞不用动后端契约。
+const REASON_LABELS = {
+  night_silence: '夜间静默',
+  in_blacklist: '黑名单',
+  not_in_whitelist: '不在白名单',
+  keyword_not_matched: '无触发词',
+  not_mentioned: '群里没 @ 我',
+  not_in_group_whitelist: '不在群聊白名单',
+  group_keyword_not_matched: '群里没提到关键词',
+  group_disabled: '群聊未启用',
+  friend_disabled: '私聊未启用',
+  rate_limited: '限速中',
+  empty: '空消息',
+  llm_failed: '生成失败，用了兜底话术',
+  wechat_not_ready: '微信未就绪',
+  prepare_failed: '连接微信失败',
+  exception: '出错了',
+  warm_ready: '微信已连好，随时可开',
+  started: '自动回复已开启',
+  stopped: '自动回复已暂停',
+};
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function hhmmss(ts) {
+  const d = new Date(ts * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function actionLabel(item) {
+  if (item.action === 'replied') return item.reason === 'llm_failed' ? '已回（兜底）' : '已回';
+  if (item.action === 'skipped') return '跳过';
+  if (item.action === 'error') return '出错';
+  return '状态';
+}
+
+function renderRecent() {
+  const list = document.getElementById('recentList');
+  const counts = recent.counts || {};
+  document.getElementById('recentCounts').textContent = counts.today_total
+    ? ('今日 回 ' + counts.today_replied + ' · 跳过 ' + counts.today_skipped + ' · 出错 ' + counts.today_errors)
+    : '';
+
+  // 一律用 createElement/textContent 建节点，绝不拼 innerHTML：
+  // 这里显示的是**陌生人发来的原文**，拼 HTML 就等于把自家门口的地垫交给对方写。
+  list.textContent = '';
+  const items = recent.items || [];
+  if (!items.length) {
+    list.className = 'recent-empty';
+    list.textContent = '还没有记录。有人发消息之后，这里会显示它做了什么、为什么这么做。';
+    return;
+  }
+  list.className = '';
+  for (const item of items) {
+    const row = el('div', 'act');
+    const head = el('div', 'act-head');
+    head.appendChild(el('span', 'act-chat', item.is_group ? (item.chat + '（群）') : (item.chat || '系统')));
+    head.appendChild(el('span', 'tag ' + item.action, actionLabel(item)));
+    if (item.reason && item.reason !== 'llm_failed') {
+      head.appendChild(el('span', '', REASON_LABELS[item.reason] || item.reason));
+    }
+    head.appendChild(el('span', 'act-time', hhmmss(item.ts)));
+    row.appendChild(head);
+
+    if (item.incoming) row.appendChild(el('div', 'bubble', item.incoming));
+    if (item.outgoing) row.appendChild(el('div', 'bubble out', item.outgoing));
+    if (item.action === 'error' && item.detail) row.appendChild(el('div', 'bubble', item.detail));
+
+    const meta = [];
+    if (item.gen_seconds != null) meta.push('生成 ' + item.gen_seconds + 's');
+    if (item.send_seconds != null) meta.push('发送 ' + item.send_seconds + 's');
+    if (meta.length) row.appendChild(el('div', 'act-meta', meta.join(' · ')));
+
+    list.appendChild(row);
+  }
+}
+
+async function refreshRecent() {
+  try {
+    recent = await api('/api/recent?limit=30');
+    renderRecent();
+  } catch (e) {
+    // 静默失败：状态卡已经会把错误讲清楚，这里再弹一次只是噪声。
+  }
 }
 
 async function refresh(silent) {
@@ -326,6 +598,8 @@ async function refresh(silent) {
     llm = status.llm || {};
     render();
     renderLlm();
+    lists = await api('/api/lists');
+    renderLists();
   } catch (e) {
     if (!silent) showToast(e.message, true);
   }
@@ -345,6 +619,85 @@ async function toggle() {
     showToast(e.message, true);
   } finally {
     btn.disabled = false;
+  }
+}
+
+// 重连微信：后台重连（30~60 秒），进度看状态行自己刷新。
+// 手机上唯一的自救手段：微信掉线/卡死时不用回家按键盘。
+async function reconnect() {
+  try {
+    await api('/api/reconnect', { method: 'POST' });
+    showToast('正在重连微信…一般 30~60 秒，状态会自己更新');
+    refresh();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+// ---- 黑白名单 ----
+// 自动刷新每几秒跑一次，不能把用户正在敲的名单冲掉：输入框有焦点就不覆盖。
+function setUnlessFocused(id, value) {
+  const node = document.getElementById(id);
+  if (document.activeElement !== node) node.value = value;
+}
+
+function renderLists() {
+  setUnlessFocused('whitelist', (lists.whitelist || []).join('\n'));
+  setUnlessFocused('blacklist', (lists.blacklist || []).join('\n'));
+
+  document.getElementById('listHint').textContent =
+    (lists.match_mode === 'contains')
+      ? '当前按「包含」匹配：名字带后缀、改了备注也照样命中。'
+      : '当前按「精确」匹配：名字要和聊天列表上显示的完全一样。';
+
+  const op = document.getElementById('onlyPerson');
+  if (document.activeElement !== op) op.checked = lists.only_person !== false;
+
+  setUnlessFocused('groupWhitelist', (lists.group_whitelist || []).join(String.fromCharCode(10)));
+  setUnlessFocused('groupKeywords', (lists.group_trigger_keywords || []).join(String.fromCharCode(10)));
+  const ge = document.getElementById('groupEnabled');
+  if (document.activeElement !== ge) ge.checked = !!lists.group_enabled;
+
+  const warn = document.getElementById('listWarn');
+  if (lists.open_to_all) {
+    warn.textContent = '⚠ 白名单是空的：现在三哥的每个好友发消息都会触发自动回复。'
+      + (lists.only_person === false
+        ? '（注意："只回个人"也关着 —— 群聊和服务号同样会被回。）'
+        : '（群聊、公众号服务号、企业微信、系统号已自动屏蔽。）')
+      + '只想回指定的人，就把他们的备注名填进下面的白名单。';
+    warn.classList.remove('hidden');
+  } else {
+    warn.classList.add('hidden');
+  }
+}
+
+async function saveLists() {
+  try {
+    const body = {
+      whitelist: document.getElementById('whitelist').value,
+      blacklist: document.getElementById('blacklist').value,
+      only_person: document.getElementById('onlyPerson').checked,
+      group_enabled: document.getElementById('groupEnabled').checked,
+      group_whitelist: document.getElementById('groupWhitelist').value,
+      group_trigger_keywords: document.getElementById('groupKeywords').value,
+    };
+    const data = await api('/api/lists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    lists = data.lists;
+    renderLists();
+    const group = lists.group_enabled
+      ? ('；群聊：' + ((lists.group_whitelist || []).length ? lists.group_whitelist.join('、') : '所有群')
+        + ((lists.group_trigger_keywords || []).length
+          ? '（提到「' + lists.group_trigger_keywords.join('、') + '」才回）' : '（每条都回）'))
+      : '；群聊关闭';
+    showToast(lists.open_to_all
+      ? ('名单已保存（白名单为空：所有好友都回' + (lists.only_person ? '，服务号已屏蔽' : '') + '）' + group)
+      : '名单已保存：' + lists.whitelist.length + ' 个人可触发回复' + group);
+  } catch (e) {
+    showToast(e.message, true);
   }
 }
 
@@ -423,16 +776,20 @@ function toggleKey() {
 
 bootstrapToken();
 refresh();
-// 连接中时轮询快一点（1.5s），好让「连接中…」及时翻成「运行中」；
-// 平时 5s 足够。令牌弹层开着时一律不轮询（避免反复 401）。
-function scheduleRefresh() {
-  const delay = status.starting ? 1500 : 5000;
-  setTimeout(() => {
-    if (autoRefresh && document.getElementById('tokenModal').classList.contains('hidden')) refresh(true);
-    scheduleRefresh();
-  }, delay);
-}
-scheduleRefresh();
+refreshRecent();
+  // 连接中时轮询快一点（1.5s），好让「连接中…」及时翻成「运行中」；平时 5s 足够。
+  // 令牌弹层开着时一律不轮询（避免反复 401）。
+  function scheduleRefresh() {
+    const delay = status.starting ? 1500 : 5000;
+    setTimeout(() => {
+      if (autoRefresh && document.getElementById('tokenModal').classList.contains('hidden')) {
+        refresh(true);
+        refreshRecent();   // 跟着同一个节拍，省一套定时器
+      }
+      scheduleRefresh();   // ← 链条必须自己接回去，漏了这句界面就永远停在打开那一刻
+    }, delay);
+  }
+  scheduleRefresh();
 </script>
 </body>
 </html>

@@ -23,6 +23,7 @@ session_cache.json
 config.local.*
 persona.json
 settings.local.json
+lists.local.json
 
 # ===== wechatauto 运行时产物（微信本地数据库/解密密钥/日志/OCR 临时文件，绝不入库）=====
 wechatauto_db/

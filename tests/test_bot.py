@@ -94,6 +94,39 @@ def test_group_only_when_mentioned():
     assert bot2.reject_reason("某群", "hi", True, at_list=["我"]) is None
 
 
+def test_group_whitelist():
+    """群聊白名单：只回名单里的群，别的群不读不答。"""
+    bot = make_bot(group_whitelist=["闲适老爸小屋"], group_only_when_mentioned=False)
+    assert bot.reject_reason("闲适老爸小屋", "hi", True) is None
+    assert bot.reject_reason("家族大群", "hi", True) == "not_in_group_whitelist"
+    # 群白名单只管群，好友不受影响
+    assert bot.reject_reason("小明", "hi", False) is None
+
+
+def test_group_whitelist_empty_means_all_groups():
+    bot = make_bot(group_whitelist=[], group_only_when_mentioned=False)
+    assert bot.reject_reason("任意群", "hi", True) is None
+
+
+def test_group_trigger_keywords():
+    """群里命中关键词才回：比"每条都回"安静，比"只有@才回"灵敏。"""
+    bot = make_bot(group_whitelist=["闲适老爸小屋"], group_trigger_keywords=["三哥", "老三"])
+    assert bot.reject_reason("闲适老爸小屋", "今天打球去吗", True) == "group_keyword_not_matched"
+    assert bot.reject_reason("闲适老爸小屋", "等会问问三哥", True) is None
+    assert bot.reject_reason("闲适老爸小屋", "老三呢", True) is None
+    # 被 @ 到也算（@ 的文本里通常就带着称呼）
+    assert bot.reject_reason("闲适老爸小屋", "@三哥 在吗", True, at_list=["三哥"]) is None
+    # 关键词只作用于群聊，好友照旧
+    assert bot.reject_reason("小明", "今天打球去吗", False) is None
+
+
+def test_group_keywords_take_precedence_over_mentioned_switch():
+    """配了关键词后，群里门槛由关键词决定，不再受 only_when_mentioned 影响。"""
+    bot = make_bot(group_only_when_mentioned=True, group_trigger_keywords=["三哥"])
+    assert bot.reject_reason("某群", "问问三哥", True) is None
+    assert bot.reject_reason("某群", "随便聊聊", True) == "group_keyword_not_matched"
+
+
 def test_keyword_trigger():
     bot = make_bot(keyword_trigger=["机票"])
     assert bot.reject_reason("小明", "今天天气不错", False) == "keyword_not_matched"
@@ -177,3 +210,23 @@ def test_on_message_rate_limited_skips_llm():
     bot = Bot(cfg, fake, SessionStore())
     assert bot.on_message("小明", "hi", False) is None
     assert fake.calls == []
+
+def test_fallback_reply_can_be_one_of_several():
+    """兜底话术配了多条就随机挑：每次同一句，朋友一眼看出是复读机。"""
+    cfg = AppConfig()
+    cfg.reply.night_silence_enabled = False
+    cfg.reply.min_interval_seconds = 0.0
+    cfg.reply.max_reply_per_minute = 100
+    cfg.reply.fallback_replies = ['甲先兜着', '乙先兜着']
+    bot = Bot(cfg, FailLLM(), SessionStore())
+    for _ in range(6):
+        assert bot.on_message('小明', '你好', False) in cfg.reply.fallback_replies
+
+
+def test_fallback_reply_falls_back_to_single_when_list_empty():
+    cfg = AppConfig()
+    cfg.reply.night_silence_enabled = False
+    cfg.reply.min_interval_seconds = 0.0
+    cfg.reply.fallback_replies = []
+    bot = Bot(cfg, FailLLM(), SessionStore())
+    assert bot.on_message('小明', '你好', False) == cfg.reply.fallback_reply
